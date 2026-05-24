@@ -12,7 +12,7 @@
 <body>
   <h1>Game OCR MVP Progress</h1>
   <ul>
-    <li><strong>Baseline:</strong> Started from docs-only repo with <code>docs/mvp-spec.md</code>, <code>docs/dev-environment.md</code>, and <code>.gitignore</code>.</li>
+    <li><strong>Baseline:</strong> Started from docs-only repo with <code>docs/dev-environment.md</code>, and <code>.gitignore</code>.</li>
     <li><strong>Decision:</strong> Implementing minimal <code>src/game_ocr</code> layout from spec; no packaging, CPU fallback, settings UI, or OCR history.</li>
     <li><strong>Progress:</strong> Created source/test skeleton and project metadata.</li>
     <li><strong>Progress:</strong> Implemented GPU gate, hotkey registration, Qt overlay, screen capture, OCR extraction, clipboard copy, and console feedback modules.</li>
@@ -27,6 +27,11 @@
     <li><strong>Progress:</strong> Added OCR model timing log; each capture now reports model processing duration in milliseconds.</li>
     <li><strong>Change outside spec:</strong> Enabled application logging at <code>INFO</code> level so OCR timing output is visible in the console.</li>
     <li><strong>Verification:</strong> <code>python -m compileall src tests</code> passes after OCR timing/logging changes.</li>
+    <li><strong>Progress:</strong> OCR now returns structured <code>OcrResult</code> data with line text and bounds for overlay rendering.</li>
+    <li><strong>Progress:</strong> Added result overlay that displays recognized lines over a topmost region-sized window; press <code>ESC</code> to close it.</li>
+    <li><strong>Change outside spec:</strong> OCR debug output now prints raw Paddle result and timing directly, and app logging uses <code>force=True</code>.</li>
+    <li><strong>Change outside spec:</strong> <code>ocr-config.json</code> now disables Paddle document/orientation extras and enables <code>return_word_box</code> for layout data.</li>
+    <li><strong>Verification:</strong> Added tests for extracting layout lines from <code>rec_boxes</code> and fallback word-region unions.</li>
   </ul>
 </body>
 </html>

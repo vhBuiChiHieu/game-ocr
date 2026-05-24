@@ -24,3 +24,7 @@ dist/
 *.log
 screenshots/
 debug-captures/
+
+# local file
+CLAUDE.md
+AGENTS.md
