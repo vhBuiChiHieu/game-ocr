@@ -1,20 +1,27 @@
 from collections.abc import Iterable
+import logging
+from time import perf_counter
 from typing import Any
 
 import numpy as np
 from PIL import Image
 
-from game_ocr.config import OCR_LANGUAGE
+from game_ocr.ocr_config import load_ocr_config
+
+logger = logging.getLogger(__name__)
 
 
 class OcrEngine:
     def __init__(self) -> None:
         from paddleocr import PaddleOCR
 
-        self._ocr = PaddleOCR(lang=OCR_LANGUAGE)
+        self._ocr = PaddleOCR(**load_ocr_config())
 
     def read_text(self, image: Image.Image) -> str:
+        start = perf_counter()
         result = self._ocr.predict(np.array(image), use_textline_orientation=False)
+        elapsed_ms = (perf_counter() - start) * 1000
+        logger.info("OCR model processing completed in %.0f ms", elapsed_ms)
         return join_text_lines(extract_text_lines(result))
 
 

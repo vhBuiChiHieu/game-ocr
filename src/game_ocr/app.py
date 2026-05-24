@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 import traceback
 from dataclasses import dataclass
@@ -58,6 +59,7 @@ class CaptureController(QtCore.QObject):
 
 
 def run() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     try:
         gpu_status = require_gpu()
         print(f"Using Paddle device: {gpu_status.device}")

@@ -23,6 +23,10 @@
     <li><strong>Progress:</strong> Added <code>pytest</code> as a dev optional dependency and configured pytest paths in <code>pyproject.toml</code>.</li>
     <li><strong>Verification:</strong> Installed dev extra in <code>.venv</code>; <code>python -m pytest</code> passes with 7 tests.</li>
     <li><strong>Verification:</strong> GPU gate reports <code>gpu:0</code>; PaddleOCR initializes and reads generated text <code>HELLO 123</code>.</li>
+    <li><strong>Progress:</strong> Added root <code>ocr-config.json</code> so OCR model names/dirs can be configured when the app starts; default values preserve current PaddleOCR behavior.</li>
+    <li><strong>Progress:</strong> Added OCR model timing log; each capture now reports model processing duration in milliseconds.</li>
+    <li><strong>Change outside spec:</strong> Enabled application logging at <code>INFO</code> level so OCR timing output is visible in the console.</li>
+    <li><strong>Verification:</strong> <code>python -m compileall src tests</code> passes after OCR timing/logging changes.</li>
   </ul>
 </body>
 </html>

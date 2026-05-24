@@ -1,3 +1,8 @@
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+OCR_CONFIG_PATH = PROJECT_ROOT / "ocr-config.json"
 HOTKEY = "alt+shift+z"
 OCR_LANGUAGE = "en"
 MIN_REGION_SIZE = 5
