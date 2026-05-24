@@ -3,12 +3,16 @@
   "ocr_version": null,
   "text_detection_model_name": null,
   "text_detection_model_dir": null,
-  "text_recognition_model_name": "PP-OCRv5_server_rec",
+  "text_recognition_model_name": null,
   "text_recognition_model_dir": null,
+  "use_doc_orientation_classify": false,
   "doc_orientation_classify_model_name": null,
   "doc_orientation_classify_model_dir": null,
+  "use_doc_unwarping": false,
   "doc_unwarping_model_name": null,
   "doc_unwarping_model_dir": null,
+  "use_textline_orientation": false,
   "textline_orientation_model_name": null,
-  "textline_orientation_model_dir": null
+  "textline_orientation_model_dir": null,
+  "return_word_box": true
 }

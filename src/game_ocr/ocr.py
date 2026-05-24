@@ -1,5 +1,6 @@
 from collections.abc import Iterable
-import logging
+from dataclasses import dataclass
+from pprint import pformat
 from time import perf_counter
 from typing import Any
 
@@ -8,7 +9,20 @@ from PIL import Image
 
 from game_ocr.ocr_config import load_ocr_config
 
-logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class OcrLine:
+    text: str
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+
+@dataclass(frozen=True)
+class OcrResult:
+    text: str
+    lines: list[OcrLine]
 
 
 class OcrEngine:
@@ -17,12 +31,14 @@ class OcrEngine:
 
         self._ocr = PaddleOCR(**load_ocr_config())
 
-    def read_text(self, image: Image.Image) -> str:
+    def read_text(self, image: Image.Image) -> OcrResult:
         start = perf_counter()
         result = self._ocr.predict(np.array(image), use_textline_orientation=False)
         elapsed_ms = (perf_counter() - start) * 1000
-        logger.info("OCR model processing completed in %.0f ms", elapsed_ms)
-        return join_text_lines(extract_text_lines(result))
+        print(f"OCR model processing completed in {elapsed_ms:.0f} ms")
+        print(f"OCR model raw result:\n{pformat(result, width=120)}")
+        text = join_text_lines(extract_text_lines(result))
+        return OcrResult(text=text, lines=extract_layout_lines(result))
 
 
 def extract_text_lines(result: Any) -> list[str]:
@@ -37,11 +53,88 @@ def extract_text_lines(result: Any) -> list[str]:
     return lines
 
 
+def extract_layout_lines(result: Any) -> list[OcrLine]:
+    for item in _walk_result(result):
+        if isinstance(item, dict):
+            lines = _extract_rec_box_lines(item)
+            if lines:
+                return lines
+            lines = _extract_text_word_region_lines(item)
+            if lines:
+                return lines
+    return []
+
+
 def _extract_rec_texts(value: dict[str, Any]) -> list[str]:
     rec_texts = value.get("rec_texts", [])
     if not isinstance(rec_texts, list):
         return []
     return [text.strip() for text in rec_texts if isinstance(text, str) and text.strip()]
+
+
+def _extract_rec_box_lines(value: dict[str, Any]) -> list[OcrLine]:
+    rec_texts = _extract_rec_texts(value)
+    rec_boxes = value.get("rec_boxes")
+    if not rec_texts or rec_boxes is None:
+        return []
+
+    lines: list[OcrLine] = []
+    for text, box in zip(rec_texts, rec_boxes, strict=False):
+        bounds = _box_to_bounds(box)
+        if bounds is None:
+            continue
+        left, top, right, bottom = bounds
+        lines.append(OcrLine(text=text, left=left, top=top, right=right, bottom=bottom))
+    return lines
+
+
+def _extract_text_word_region_lines(value: dict[str, Any]) -> list[OcrLine]:
+    text_words = value.get("text_word")
+    text_word_regions = value.get("text_word_region")
+    if not isinstance(text_words, list) or not isinstance(text_word_regions, list):
+        return []
+
+    lines: list[OcrLine] = []
+    for line_words, line_regions in zip(text_words, text_word_regions, strict=False):
+        if not isinstance(line_words, list) or not isinstance(line_regions, list):
+            continue
+        text = "".join(token for token in line_words if isinstance(token, str)).strip()
+        bounds = _merge_bounds(_region_to_bounds(region) for region in line_regions)
+        if text and bounds is not None:
+            left, top, right, bottom = bounds
+            lines.append(OcrLine(text=text, left=left, top=top, right=right, bottom=bottom))
+    return lines
+
+
+def _merge_bounds(bounds: Iterable[tuple[int, int, int, int] | None]) -> tuple[int, int, int, int] | None:
+    valid_bounds = [bound for bound in bounds if bound is not None]
+    if not valid_bounds:
+        return None
+    lefts, tops, rights, bottoms = zip(*valid_bounds, strict=True)
+    return min(lefts), min(tops), max(rights), max(bottoms)
+
+
+def _region_to_bounds(region: Any) -> tuple[int, int, int, int] | None:
+    try:
+        points = list(region)
+        xs = [int(point[0]) for point in points]
+        ys = [int(point[1]) for point in points]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not xs or not ys:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _box_to_bounds(box: Any) -> tuple[int, int, int, int] | None:
+    try:
+        values = [int(value) for value in box]
+    except (TypeError, ValueError):
+        return None
+    if len(values) != 4:
+        return None
+    left, top, right, bottom = values
+    return left, top, right, bottom
 
 
 def join_text_lines(lines: Iterable[str]) -> str:

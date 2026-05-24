@@ -13,7 +13,7 @@ from game_ocr.config import GPU_REQUIRED_ERROR, HOTKEY
 from game_ocr.hotkeys import HotkeyRegistration, register_capture_hotkey
 from game_ocr.ocr import OcrEngine
 from game_ocr.ui import notify
-from game_ocr.ui.overlay import SelectionOverlay
+from game_ocr.ui.overlay import ResultOverlay, SelectionOverlay
 
 
 @dataclass
@@ -45,12 +45,13 @@ class CaptureController(QtCore.QObject):
                 notify.show_cancel()
                 return
             image = capture_region(region)
-            text = self._ocr_engine.read_text(image)
-            if not text:
+            ocr_result = self._ocr_engine.read_text(image)
+            if not ocr_result.text:
                 notify.show_no_text()
                 return
-            copy_text(text)
-            notify.show_success(text)
+            copy_text(ocr_result.text)
+            notify.show_success(ocr_result.text)
+            ResultOverlay.show_result(ocr_result.lines, region)
         except Exception as exc:
             notify.show_error(str(exc))
             traceback.print_exc()
@@ -59,7 +60,7 @@ class CaptureController(QtCore.QObject):
 
 
 def run() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", force=True)
     try:
         gpu_status = require_gpu()
         print(f"Using Paddle device: {gpu_status.device}")
