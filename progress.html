@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Game OCR MVP Progress</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 840px; margin: 32px auto; line-height: 1.5; }
+    code { background: #f3f3f3; padding: 2px 4px; }
+    li { margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Game OCR MVP Progress</h1>
+  <ul>
+    <li><strong>Baseline:</strong> Started from docs-only repo with <code>docs/mvp-spec.md</code>, <code>docs/dev-environment.md</code>, and <code>.gitignore</code>.</li>
+    <li><strong>Decision:</strong> Implementing minimal <code>src/game_ocr</code> layout from spec; no packaging, CPU fallback, settings UI, or OCR history.</li>
+    <li><strong>Progress:</strong> Created source/test skeleton and project metadata.</li>
+    <li><strong>Progress:</strong> Implemented GPU gate, hotkey registration, Qt overlay, screen capture, OCR extraction, clipboard copy, and console feedback modules.</li>
+    <li><strong>Decision:</strong> Console feedback is primary for MVP; no extra toast dependency added.</li>
+    <li><strong>Change outside spec:</strong> PaddleOCR 3.5 rejected legacy <code>ocr(..., cls=False)</code>; OCR call uses <code>predict(..., use_textline_orientation=False)</code>.</li>
+    <li><strong>Change outside spec:</strong> PaddleOCR 3.5 returns recognized text in <code>rec_texts</code>; extractor supports that shape plus legacy tuple shapes for tests.</li>
+    <li><strong>Verification:</strong> Stdlib <code>unittest</code> suite passes; <code>pytest</code> was initially absent from the venv.</li>
+    <li><strong>Progress:</strong> Added <code>pytest</code> as a dev optional dependency and configured pytest paths in <code>pyproject.toml</code>.</li>
+    <li><strong>Verification:</strong> Installed dev extra in <code>.venv</code>; <code>python -m pytest</code> passes with 7 tests.</li>
+    <li><strong>Verification:</strong> GPU gate reports <code>gpu:0</code>; PaddleOCR initializes and reads generated text <code>HELLO 123</code>.</li>
+  </ul>
+</body>
+</html>
