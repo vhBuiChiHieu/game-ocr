@@ -16,6 +16,7 @@ dependencies = [
     "opencv-python>=4.10.0",
     "numpy",
     "Pillow",
+    "pystray>=0.19",
 ]
 
 [project.optional-dependencies]

@@ -43,6 +43,32 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(status.device, "gpu:0")
 
+    def test_run_stops_hotkey_and_tray_on_shutdown(self) -> None:
+        from game_ocr import app
+
+        fake_qt_app = mock.Mock()
+        fake_qt_app.exec.return_value = 0
+        registration = mock.Mock()
+        tray_icon = mock.Mock()
+
+        with (
+            mock.patch.dict(app.os.environ, {}, clear=True),
+            mock.patch.object(app, "require_gpu", return_value=app.GpuStatus(device="gpu:0")),
+            mock.patch.object(app, "OcrEngine"),
+            mock.patch.object(app.QtWidgets.QApplication, "instance", return_value=fake_qt_app),
+            mock.patch.object(app, "register_capture_hotkey", return_value=registration),
+            mock.patch.object(app, "start_tray_icon", return_value=tray_icon) as start_tray_icon,
+            mock.patch.object(app.QtCore.QMetaObject, "invokeMethod") as invoke_method,
+        ):
+            result = app.run()
+            on_exit = start_tray_icon.call_args.args[0]
+            on_exit()
+
+        self.assertEqual(result, 0)
+        registration.unregister.assert_called_once_with()
+        tray_icon.stop.assert_called_once_with()
+        invoke_method.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
