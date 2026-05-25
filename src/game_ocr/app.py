@@ -15,7 +15,12 @@ from game_ocr.hotkeys import HotkeyRegistration, register_capture_hotkey
 from game_ocr.logging_config import configure_file_logging, daily_log_path
 from game_ocr.ocr import OcrEngine, OcrResult
 from game_ocr.translate_client import TranslateBackendState, ensure_translate_backend, stop_owned_translate_backend, translate_text
-from game_ocr.translation_blocks import TranslationGrouping, build_translation_blocks
+from game_ocr.translation_blocks import (
+    TranslatedBlock,
+    TranslationGrouping,
+    build_translation_blocks,
+    compose_translated_blocks,
+)
 from game_ocr.ui import notify
 from game_ocr.ui.overlay import ResultOverlay, SelectionOverlay
 from game_ocr.ui.tray import TrayIcon, start_tray_icon
@@ -66,14 +71,78 @@ class CaptureController(QtCore.QObject):
             copy_text(ocr_result.text)
             logger.info("OCR text copied to clipboard.")
             notify.show_success(ocr_result.text)
-            ResultOverlay.show_result(ocr_result.lines, region)
-            logger.info("OCR result overlay closed.")
-            _start_translation_logging(ocr_result, region.width, region.height, self._translate_backend)
+            translated_blocks = _translate_ocr_result_for_overlay(ocr_result, region.width, region.height, self._translate_backend)
+            if translated_blocks is None:
+                ResultOverlay.show_result(ocr_result.lines, region)
+                logger.info("OCR result overlay closed.")
+            else:
+                ResultOverlay.show_translated(translated_blocks, region)
+                logger.info("OCR translated result overlay closed.")
+                _log_translated_blocks(translated_blocks)
         except Exception as exc:
             notify.show_error(str(exc))
             logger.exception("OCR capture failed")
         finally:
             self._active = False
+
+
+def _translate_ocr_result_for_overlay(
+    ocr_result: OcrResult,
+    width: int,
+    height: int,
+    translate_backend: TranslateBackendState | None,
+) -> tuple[TranslatedBlock, ...] | None:
+    grouping = build_translation_blocks(ocr_result.lines, width=width, height=height)
+    backend_label = "ready" if translate_backend and translate_backend.ready else "degraded"
+    model = translate_backend.model if translate_backend else "unknown"
+    logger.info(
+        "Translate overlay: source_lines=%s rows=%s blocks=%s units=%s backend=%s model=%s",
+        grouping.source_line_count,
+        grouping.row_count,
+        len(grouping.blocks),
+        len(grouping.units),
+        backend_label,
+        model,
+    )
+    _log_grouping_edges(grouping)
+    if not translate_backend or not translate_backend.ready:
+        reason = translate_backend.reason if translate_backend else "backend unavailable"
+        logger.warning("Translate overlay fallback: reason=%r", reason)
+        return None
+
+    translations: dict[int, str] = {}
+    for unit in grouping.units:
+        try:
+            translations[unit.index] = translate_text(unit.text)
+        except Exception as exc:
+            logger.warning(
+                "Translate overlay unit %s failed role=%s bbox=%s error=%r\n  source: %s",
+                unit.index,
+                unit.role,
+                (unit.left, unit.top, unit.right, unit.bottom),
+                str(exc),
+                unit.text,
+            )
+    if not translations:
+        logger.warning("Translate overlay fallback: reason='all units failed'")
+        return None
+    blocks = compose_translated_blocks(grouping, translations)
+    for block in blocks:
+        logger.info(
+            "Translate overlay block %s role=%s bbox=%s units=%s complete=%s\n  source: %s\n  vi: %s",
+            block.block_index,
+            block.role,
+            (block.left, block.top, block.right, block.bottom),
+            sum(1 for unit in grouping.units if unit.block_index == block.block_index),
+            block.complete,
+            block.source_text,
+            block.translated_text,
+        )
+    return blocks
+
+
+def _log_translated_blocks(blocks: tuple[TranslatedBlock, ...]) -> None:
+    logger.info("Translate overlay final blocks=%s complete=%s", len(blocks), sum(1 for block in blocks if block.complete))
 
 
 def _start_translation_logging(

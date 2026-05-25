@@ -1,7 +1,8 @@
 import unittest
 
 from game_ocr.ocr import OcrLine, _format_ocr_debug_summary, extract_layout_lines, extract_text_lines, join_text_lines
-from game_ocr.ui.overlay import layout_lines_for_display
+from game_ocr.translation_blocks import build_translation_blocks, compose_translated_blocks
+from game_ocr.ui.overlay import layout_lines_for_display, layout_translated_blocks_for_display
 
 
 class OcrTests(unittest.TestCase):
@@ -220,6 +221,53 @@ class OcrTests(unittest.TestCase):
         self.assertTrue(all(line.font_size >= 8 for line in display_lines))
         for current, next_line in zip(display_lines, display_lines[1:], strict=False):
             self.assertLessEqual(current.y + current.font_size, next_line.y)
+
+    def test_translated_layout_places_sample_without_overlap(self) -> None:
+        lines = [
+            OcrLine("Quit Now?", 22, 18, 128, 40),
+            OcrLine("Your progress will not be saved. Quit now?", 155, 116, 541, 136),
+            OcrLine("Any unsaved progress will be lost.", 195, 141, 506, 165),
+            OcrLine("Cancel", 113, 227, 185, 254),
+            OcrLine("Confirm", 507, 228, 589, 254),
+        ]
+        grouping = build_translation_blocks(lines, width=704, height=295)
+        blocks = compose_translated_blocks(
+            grouping,
+            {
+                1: "Bỏ cuộc ngay bây giờ?",
+                2: "Tiến trình của bạn sẽ không được lưu.",
+                3: "Bỏ cuộc ngay bây giờ?",
+                4: "Bất kỳ tiến trình nào chưa được lưu sẽ bị mất.",
+                5: "Hủy",
+                6: "Xác nhận",
+            },
+        )
+
+        boxes = layout_translated_blocks_for_display(blocks, width=704, height=295)
+
+        self.assertEqual(len(boxes), 5)
+        self.assertTrue(all(box.x >= 0 and box.y >= 0 and box.x + box.width <= 704 and box.y + box.height <= 295 for box in boxes))
+        for index, box in enumerate(boxes):
+            for other in boxes[index + 1 :]:
+                self.assertFalse(box.x < other.x + other.width and box.x + box.width > other.x and box.y < other.y + other.height and box.y + box.height > other.y)
+        buttons = [box for box in boxes if box.role == "button"]
+        self.assertEqual(len(buttons), 2)
+        self.assertLessEqual(abs(buttons[0].y - buttons[1].y), 4)
+        self.assertLess(buttons[0].x + buttons[0].width / 2, buttons[1].x + buttons[1].width / 2)
+        body_boxes = [box for box in boxes if box.role == "dialogue"]
+        self.assertGreaterEqual(len(body_boxes[0].wrapped_lines), 2)
+
+    def test_translated_layout_handles_tiny_region(self) -> None:
+        lines = [OcrLine("Very long translated text", 5, 5, 95, 20)]
+        grouping = build_translation_blocks(lines, width=100, height=50)
+        blocks = compose_translated_blocks(grouping, {1: "Một dòng dịch rất dài cần thu nhỏ"})
+
+        boxes = layout_translated_blocks_for_display(blocks, width=100, height=50)
+
+        self.assertEqual(len(boxes), 1)
+        self.assertGreaterEqual(boxes[0].font_size, 8)
+        self.assertLessEqual(boxes[0].x + boxes[0].width, 100)
+        self.assertLessEqual(boxes[0].y + boxes[0].height, 50)
 
 
 if __name__ == "__main__":

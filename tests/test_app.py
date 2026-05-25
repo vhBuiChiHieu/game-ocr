@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from game_ocr.app import require_gpu
+from game_ocr.capture import Region
 from game_ocr.config import GPU_REQUIRED_ERROR
 from game_ocr.ocr import OcrLine, OcrResult
 
@@ -124,6 +125,78 @@ class AppTests(unittest.TestCase):
             app._log_translation_blocks(ocr_result, 220, 80, translate_backend)
 
         translate_text.assert_not_called()
+
+    def test_capture_flow_falls_back_to_source_overlay_when_backend_not_ready(self) -> None:
+        from game_ocr import app
+
+        ocr_result = OcrResult("Hello there.", [OcrLine("Hello there.", 10, 10, 200, 30)])
+        controller = app.CaptureController(mock.Mock(read_text=mock.Mock(return_value=ocr_result)), app.TranslateBackendState(False, "model", "down"))
+
+        with (
+            mock.patch.object(app.SelectionOverlay, "select_region", return_value=Region(0, 0, 220, 80)),
+            mock.patch.object(app, "capture_region", return_value=mock.Mock(width=220, height=80, mode="RGB")),
+            mock.patch.object(app, "copy_text") as copy_text,
+            mock.patch.object(app.notify, "show_success"),
+            mock.patch.object(app.ResultOverlay, "show_result") as show_result,
+            mock.patch.object(app.ResultOverlay, "show_translated") as show_translated,
+            mock.patch.object(app, "translate_text") as translate_text,
+        ):
+            controller._run_capture_flow()
+
+        copy_text.assert_called_once_with("Hello there.")
+        show_result.assert_called_once()
+        show_translated.assert_not_called()
+        translate_text.assert_not_called()
+
+    def test_capture_flow_falls_back_to_source_overlay_when_all_translation_fails(self) -> None:
+        from game_ocr import app
+
+        ocr_result = OcrResult("Hello there.", [OcrLine("Hello there.", 10, 10, 200, 30)])
+        controller = app.CaptureController(mock.Mock(read_text=mock.Mock(return_value=ocr_result)), app.TranslateBackendState(True, "model", "ready"))
+
+        with (
+            mock.patch.object(app.SelectionOverlay, "select_region", return_value=Region(0, 0, 220, 80)),
+            mock.patch.object(app, "capture_region", return_value=mock.Mock(width=220, height=80, mode="RGB")),
+            mock.patch.object(app, "copy_text"),
+            mock.patch.object(app.notify, "show_success"),
+            mock.patch.object(app.ResultOverlay, "show_result") as show_result,
+            mock.patch.object(app.ResultOverlay, "show_translated") as show_translated,
+            mock.patch.object(app, "translate_text", side_effect=RuntimeError("boom")),
+        ):
+            controller._run_capture_flow()
+
+        show_result.assert_called_once()
+        show_translated.assert_not_called()
+
+    def test_capture_flow_shows_translated_overlay_on_partial_success(self) -> None:
+        from game_ocr import app
+
+        ocr_result = OcrResult("Hello there. Are you ready?", [OcrLine("Hello there. Are you ready?", 10, 10, 500, 30)])
+        controller = app.CaptureController(mock.Mock(read_text=mock.Mock(return_value=ocr_result)), app.TranslateBackendState(True, "model", "ready"))
+        calls: list[str] = []
+
+        def record_copy(text: str) -> None:
+            calls.append(f"copy:{text}")
+
+        def record_overlay(*args: object) -> None:
+            calls.append("overlay")
+
+        with (
+            mock.patch.object(app.SelectionOverlay, "select_region", return_value=Region(0, 0, 520, 80)),
+            mock.patch.object(app, "capture_region", return_value=mock.Mock(width=520, height=80, mode="RGB")),
+            mock.patch.object(app, "copy_text", side_effect=record_copy),
+            mock.patch.object(app.notify, "show_success"),
+            mock.patch.object(app.ResultOverlay, "show_result") as show_result,
+            mock.patch.object(app.ResultOverlay, "show_translated", side_effect=record_overlay) as show_translated,
+            mock.patch.object(app, "translate_text", side_effect=[RuntimeError("boom"), "Bạn sẵn sàng chưa?"]),
+        ):
+            controller._run_capture_flow()
+
+        show_result.assert_not_called()
+        show_translated.assert_called_once()
+        translated_blocks = show_translated.call_args.args[0]
+        self.assertEqual(translated_blocks[0].translated_text, "Hello there.\nBạn sẵn sàng chưa?")
+        self.assertEqual(calls, ["copy:Hello there. Are you ready?", "overlay"])
 
 
 if __name__ == "__main__":

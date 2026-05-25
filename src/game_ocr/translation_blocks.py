@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from statistics import median
 
@@ -93,6 +94,31 @@ class TranslationUnit:
 
 
 @dataclass(frozen=True)
+class TranslationUnitResult:
+    unit_index: int
+    block_index: int
+    source_text: str
+    display_text: str
+    translated: bool
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class TranslatedBlock:
+    block_index: int
+    source_text: str
+    translated_text: str
+    left: int
+    top: int
+    right: int
+    bottom: int
+    role: str
+    rows: int
+    reasons: tuple[str, ...]
+    complete: bool
+
+
+@dataclass(frozen=True)
 class GroupingEdge:
     previous: int
     next: int
@@ -128,6 +154,47 @@ def build_translation_blocks(lines: list[OcrLine], width: int | None = None, hei
         units=tuple(units),
         edges=tuple(edges),
     )
+
+
+def compose_translated_blocks(grouping: TranslationGrouping, translations: Mapping[int, str]) -> tuple[TranslatedBlock, ...]:
+    blocks: list[TranslatedBlock] = []
+    units_by_block = {
+        block.index: [unit for unit in grouping.units if unit.block_index == block.index]
+        for block in grouping.blocks
+    }
+    for block in grouping.blocks:
+        units = units_by_block[block.index]
+        parts: list[str] = []
+        complete = True
+        for unit in units:
+            translated = translations.get(unit.index)
+            if translated:
+                parts.append(" ".join(translated.split()))
+            else:
+                parts.append(unit.text)
+                complete = False
+        separator = " " if block.role in {"button", "menu_item", "speaker"} else "\n"
+        translated_text = separator.join(part for part in parts if part).strip() or block.text
+        blocks.append(
+            TranslatedBlock(
+                block_index=block.index,
+                source_text=block.text,
+                translated_text=translated_text,
+                left=block.left,
+                top=block.top,
+                right=block.right,
+                bottom=block.bottom,
+                role=block.role,
+                rows=len(block.rows),
+                reasons=block.reasons,
+                complete=complete and bool(units),
+            )
+        )
+    return tuple(blocks)
+
+
+def translated_blocks_have_success(blocks: tuple[TranslatedBlock, ...]) -> bool:
+    return any(block.complete or block.translated_text != block.source_text for block in blocks)
 
 
 def _normalize_lines(lines: list[OcrLine]) -> list[OcrTextNode]:

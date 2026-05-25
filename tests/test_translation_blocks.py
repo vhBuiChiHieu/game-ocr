@@ -1,7 +1,7 @@
 import unittest
 
 from game_ocr.ocr import OcrLine
-from game_ocr.translation_blocks import build_translation_blocks
+from game_ocr.translation_blocks import build_translation_blocks, compose_translated_blocks, translated_blocks_have_success
 
 
 class TranslationBlockTests(unittest.TestCase):
@@ -66,6 +66,46 @@ class TranslationBlockTests(unittest.TestCase):
         grouping = build_translation_blocks(lines, width=520, height=80)
 
         self.assertEqual([unit.text for unit in grouping.units], ["Mr. Smith found v1.2 and 3.14... Really?"])
+
+    def test_compose_translated_blocks_joins_split_dialogue_units(self) -> None:
+        lines = [OcrLine(text="Hello there. Are you ready?", left=10, top=10, right=500, bottom=30)]
+        grouping = build_translation_blocks(lines, width=520, height=80)
+
+        blocks = compose_translated_blocks(grouping, {1: "Xin chào.", 2: "Bạn sẵn sàng chưa?"})
+
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].translated_text, "Xin chào.\nBạn sẵn sàng chưa?")
+        self.assertTrue(blocks[0].complete)
+        self.assertTrue(translated_blocks_have_success(blocks))
+
+    def test_compose_translated_blocks_uses_source_for_failed_unit(self) -> None:
+        lines = [OcrLine(text="Hello there. Are you ready?", left=10, top=10, right=500, bottom=30)]
+        grouping = build_translation_blocks(lines, width=520, height=80)
+
+        blocks = compose_translated_blocks(grouping, {2: "Bạn sẵn sàng chưa?"})
+
+        self.assertEqual(blocks[0].translated_text, "Hello there.\nBạn sẵn sàng chưa?")
+        self.assertFalse(blocks[0].complete)
+        self.assertTrue(translated_blocks_have_success(blocks))
+
+    def test_compose_translated_blocks_uses_space_for_button_units(self) -> None:
+        lines = [OcrLine(text="Cancel. Now?", left=50, top=200, right=130, bottom=230)]
+        grouping = build_translation_blocks(lines, width=700, height=300)
+
+        blocks = compose_translated_blocks(grouping, {1: "Hủy.", 2: "Bây giờ?"})
+
+        self.assertEqual(blocks[0].role, "button")
+        self.assertEqual(blocks[0].translated_text, "Hủy. Bây giờ?")
+
+    def test_compose_translated_blocks_all_failed_has_no_success(self) -> None:
+        lines = [OcrLine(text="Hello there.", left=10, top=10, right=200, bottom=30)]
+        grouping = build_translation_blocks(lines, width=220, height=80)
+
+        blocks = compose_translated_blocks(grouping, {})
+
+        self.assertEqual(blocks[0].translated_text, "Hello there.")
+        self.assertFalse(blocks[0].complete)
+        self.assertFalse(translated_blocks_have_success(blocks))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from game_ocr.capture import Region, normalize_region
 from game_ocr.ocr import OcrLine
+from game_ocr.translation_blocks import TranslatedBlock
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,33 @@ class DisplayLine:
     x: int
     y: int
     font_size: int
+
+
+@dataclass(frozen=True)
+class DisplayTextBox:
+    text: str
+    x: int
+    y: int
+    width: int
+    height: int
+    font_size: int
+    role: str
+    align: str
+    source_bbox: tuple[int, int, int, int]
+    wrapped_lines: tuple[str, ...]
+
+
+@dataclass
+class _TranslatedCandidate:
+    block: TranslatedBlock
+    x: int
+    y: int
+    width: int
+    height: int
+    font_size: int
+    align: str
+    wrapped_lines: tuple[str, ...]
+    overflow: bool = False
 
 
 @dataclass
@@ -184,6 +212,201 @@ def layout_lines_for_display(lines: list[OcrLine], width: int, height: int) -> l
         ),
     )
     return display_lines
+
+
+def layout_translated_blocks_for_display(blocks: tuple[TranslatedBlock, ...], width: int, height: int) -> list[DisplayTextBox]:
+    if not blocks:
+        return[]
+
+    padding = 12
+    ordered = sorted(blocks, key=lambda block: (block.top, block.left))
+    candidates = [_fit_translated_block(block, width, height, padding) for block in ordered]
+    _align_same_row_buttons(candidates, width, height, padding)
+    _resolve_translated_collisions(candidates, height, padding)
+    boxes = [
+        DisplayTextBox(
+            text=candidate.block.translated_text,
+            x=candidate.x,
+            y=candidate.y,
+            width=candidate.width,
+            height=candidate.height,
+            font_size=candidate.font_size,
+            role=candidate.block.role,
+            align=candidate.align,
+            source_bbox=(candidate.block.left, candidate.block.top, candidate.block.right, candidate.block.bottom),
+            wrapped_lines=candidate.wrapped_lines,
+        )
+        for candidate in candidates
+    ]
+    logger.info("\n%s", _format_translated_layout_debug_summary(boxes, width, height))
+    return boxes
+
+
+def _fit_translated_block(block: TranslatedBlock, width: int, height: int, padding: int) -> _TranslatedCandidate:
+    source_w = max(1, block.right - block.left)
+    source_h = max(1, block.bottom - block.top)
+    box_w, box_h = _translated_box_size(block.role, source_w, source_h, width, height, padding)
+    x, y = _translated_box_position(block, box_w, box_h, width, height, padding)
+    align = _translated_align(block, width)
+    preferred_font, min_font = _translated_font_range(block.role, source_h, height)
+    for font_size in range(preferred_font, min_font - 1, -1):
+        wrapped = _wrap_translated_text(block.translated_text, font_size, box_w)
+        needed_h = _translated_text_height(font_size, len(wrapped))
+        if needed_h <= box_h:
+            return _TranslatedCandidate(block, x, y, box_w, needed_h, font_size, align, wrapped)
+    wrapped = _wrap_translated_text(block.translated_text, min_font, box_w)
+    needed_h = _translated_text_height(min_font, len(wrapped))
+    return _TranslatedCandidate(block, x, y, box_w, min(needed_h, height - padding * 2), min_font, align, wrapped, overflow=needed_h > box_h)
+
+
+def _translated_box_size(role: str, source_w: int, source_h: int, width: int, height: int, padding: int) -> tuple[int, int]:
+    available_w = max(1, width - padding * 2)
+    if role in {"speaker", "title"}:
+        box_w = min(available_w, max(source_w, round(source_w * 1.8), round(width * 0.45)))
+        box_h = round(source_h * 2.2)
+    elif role in {"dialogue", "body", "notice"}:
+        box_w = min(available_w, max(source_w, round(width * 0.58)))
+        box_h = round(source_h * 3.8)
+    elif role == "button":
+        box_w = min(available_w, max(source_w, min(round(source_w * 1.8), source_w + 100)))
+        box_h = round(source_h * 1.8)
+    elif role == "menu_item":
+        box_w = min(available_w, max(source_w, round(source_w * 2.0)))
+        box_h = round(source_h * 2.0)
+    else:
+        box_w = min(available_w, max(source_w, round(source_w * 1.5)))
+        box_h = round(source_h * 2.0)
+    return max(1, box_w), max(1, min(box_h, height - padding * 2))
+
+
+def _translated_box_position(block: TranslatedBlock, box_w: int, box_h: int, width: int, height: int, padding: int) -> tuple[int, int]:
+    source_cx = (block.left + block.right) / 2
+    source_cy = (block.top + block.bottom) / 2
+    if block.role in {"dialogue", "body", "notice", "button"}:
+        x = round(source_cx - box_w / 2)
+        y = round(source_cy - box_h / 2)
+    else:
+        x = block.left
+        y = block.top
+    return _clamp_int(x, padding, max(padding, width - padding - box_w)), _clamp_int(y, padding, max(padding, height - padding - box_h))
+
+
+def _translated_align(block: TranslatedBlock, width: int) -> str:
+    source_cx = (block.left + block.right) / 2
+    if block.role == "button" or (block.role in {"dialogue", "notice", "body"} and abs(source_cx - width / 2) <= width * 0.18):
+        return "center"
+    return "left"
+
+
+def _translated_font_range(role: str, source_h: int, height: int) -> tuple[int, int]:
+    tiny_min = 8 if height < 90 else 10
+    if role in {"speaker", "title"}:
+        return _clamp_int(round(source_h * 1.15), 12, 28), max(10, tiny_min)
+    if role == "button":
+        return _clamp_int(round(source_h * 1.05), 10, 24), tiny_min
+    if role == "menu_item":
+        return _clamp_int(round(source_h * 1.00), 10, 24), tiny_min
+    return _clamp_int(round(source_h * 0.90), 11, 18), tiny_min
+
+
+def _wrap_translated_text(text: str, font_size: int, width: int) -> tuple[str, ...]:
+    max_width = max(1, width - 8)
+    lines: list[str] = []
+    for raw_line in text.splitlines() or [text]:
+        words = raw_line.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if _translated_text_width(candidate, font_size) <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+    return tuple(lines or [text])
+
+
+def _translated_text_width(text: str, font_size: int) -> float:
+    if QtWidgets.QApplication.instance() is not None:
+        font = QtGui.QFont("Segoe UI")
+        font.setPixelSize(font_size)
+        return QtGui.QFontMetricsF(font).horizontalAdvance(text)
+    return len(text) * font_size * 0.55
+
+
+def _translated_text_height(font_size: int, line_count: int) -> int:
+    line_gap = max(2, round(font_size * 0.18))
+    return font_size * line_count + line_gap * max(0, line_count - 1)
+
+
+def _align_same_row_buttons(candidates: list[_TranslatedCandidate], width: int, height: int, padding: int) -> None:
+    buttons = [candidate for candidate in candidates if candidate.block.role == "button"]
+    if len(buttons) < 2:
+        return
+    tops = [button.block.top for button in buttons]
+    if max(tops) - min(tops) > max(6, round(median(button.block.bottom - button.block.top for button in buttons) * 0.5)):
+        return
+    shared_y = _clamp_int(round(median(tops)), padding, max(padding, height - padding - max(button.height for button in buttons)))
+    for button in buttons:
+        center_x = (button.block.left + button.block.right) / 2
+        button.y = shared_y
+        button.x = _clamp_int(round(center_x - button.width / 2), padding, max(padding, width - padding - button.width))
+
+
+def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], height: int, padding: int) -> None:
+    min_gap = 3
+    for previous, current in zip(candidates, candidates[1:], strict=False):
+        if not _translated_candidates_overlap(previous, current):
+            continue
+        overlap_y = previous.y + previous.height + min_gap - current.y
+        if overlap_y <= 0:
+            continue
+        if current.block.role == "button":
+            previous.y = max(padding, current.y - min_gap - previous.height)
+        else:
+            current.y = min(max(padding, height - padding - current.height), current.y + overlap_y)
+    for candidate in reversed(candidates[:-1]):
+        overlapping_next = [item for item in candidates if item.y > candidate.y and _translated_candidates_overlap(candidate, item)]
+        if not overlapping_next:
+            continue
+        next_candidate = min(overlapping_next, key=lambda item: item.y)
+        candidate.y = max(padding, next_candidate.y - min_gap - candidate.height)
+
+
+def _translated_candidates_overlap(first: _TranslatedCandidate, second: _TranslatedCandidate) -> bool:
+    return first.x < second.x + second.width and first.x + first.width > second.x and first.y < second.y + second.height and first.y + first.height > second.y
+
+
+def _format_translated_layout_debug_summary(boxes: list[DisplayTextBox], width: int, height: int) -> str:
+    overlaps = 0
+    for index, box in enumerate(boxes):
+        for other in boxes[index + 1 :]:
+            if _boxes_overlap(box, other):
+                overlaps += 1
+    overflow = sum(1 for box in boxes if box.x < 0 or box.y < 0 or box.x + box.width > width or box.y + box.height > height)
+    lines = [
+        "Translated overlay layout:",
+        f"  blocks={len(boxes)} boxes={len(boxes)} size={width}x{height}",
+        f"  fit={{overflow={overflow} overlaps={overlaps} min_font={min((box.font_size for box in boxes), default=0)}}}",
+    ]
+    for index, box in enumerate(boxes[:20], start=1):
+        source = box.source_bbox
+        target = (box.x, box.y, box.x + box.width, box.y + box.height)
+        text = "|".join(box.wrapped_lines)
+        lines.append(
+            f"  box {index}: role={box.role} source={source} target={target} font={box.font_size} "
+            f"align={box.align} lines={len(box.wrapped_lines)} text={text!r}"
+        )
+    if len(boxes) > 20:
+        lines.append(f"  ... {len(boxes) - 20} more boxes")
+    return "\n".join(lines)
+
+
+def _boxes_overlap(first: DisplayTextBox, second: DisplayTextBox) -> bool:
+    return first.x < second.x + second.width and first.x + first.width > second.x and first.y < second.y + second.height and first.y + first.height > second.y
 
 
 def _effective_line_heights(line_heights: list[int], median_height: float) -> list[float]:
@@ -635,9 +858,16 @@ def _clamp_int(value: int, lower: int, upper: int) -> int:
 
 
 class ResultOverlay(QtWidgets.QDialog):
-    def __init__(self, lines: list[OcrLine], width: int, height: int) -> None:
+    def __init__(
+        self,
+        lines: list[OcrLine] | None,
+        width: int,
+        height: int,
+        translated_blocks: tuple[TranslatedBlock, ...] = (),
+    ) -> None:
         super().__init__()
-        self._lines = layout_lines_for_display(lines, width, height)
+        self._lines = [] if translated_blocks else layout_lines_for_display(lines or [], width, height)
+        self._boxes = layout_translated_blocks_for_display(translated_blocks, width, height) if translated_blocks else []
 
         self.setWindowFlags(
             QtCore.Qt.WindowType.FramelessWindowHint
@@ -649,18 +879,29 @@ class ResultOverlay(QtWidgets.QDialog):
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         geometry = self._target_geometry(width, height)
         logger.info(
-            "Result overlay window: xy=(%s,%s) size=%sx%s lines=%s",
+            "Result overlay window: xy=(%s,%s) size=%sx%s lines=%s boxes=%s",
             geometry.x(),
             geometry.y(),
             geometry.width(),
             geometry.height(),
             len(self._lines),
+            len(self._boxes),
         )
         self.setGeometry(geometry)
 
     @classmethod
     def show_result(cls, lines: list[OcrLine], region: Region) -> None:
         overlay = cls(lines, region.width, region.height)
+        overlay.show()
+        overlay.raise_()
+        overlay.activateWindow()
+        overlay.exec()
+        overlay.close()
+        QtWidgets.QApplication.processEvents()
+
+    @classmethod
+    def show_translated(cls, blocks: tuple[TranslatedBlock, ...], region: Region) -> None:
+        overlay = cls(None, region.width, region.height, blocks)
         overlay.show()
         overlay.raise_()
         overlay.activateWindow()
@@ -684,11 +925,34 @@ class ResultOverlay(QtWidgets.QDialog):
 
         painter.setPen(QtGui.QColor(255, 255, 255))
         font = QtGui.QFont("Segoe UI")
+        if self._boxes:
+            self._paint_boxes(painter, font)
+        else:
+            self._paint_lines(painter, font)
+
+    def _paint_lines(self, painter: QtGui.QPainter, font: QtGui.QFont) -> None:
         for line in self._lines:
             font.setPixelSize(line.font_size)
             painter.setFont(font)
             baseline = line.y + QtGui.QFontMetricsF(font).ascent()
             painter.drawText(QtCore.QPointF(line.x, baseline), line.text)
+
+    def _paint_boxes(self, painter: QtGui.QPainter, font: QtGui.QFont) -> None:
+        for box in self._boxes:
+            font.setPixelSize(box.font_size)
+            painter.setFont(font)
+            metrics = QtGui.QFontMetricsF(font)
+            line_gap = max(2, round(box.font_size * 0.18))
+            cursor_y = box.y
+            for wrapped_line in box.wrapped_lines:
+                line_width = metrics.horizontalAdvance(wrapped_line)
+                if box.align == "center":
+                    x = box.x + max(0, (box.width - line_width) / 2)
+                else:
+                    x = box.x
+                baseline = cursor_y + metrics.ascent()
+                painter.drawText(QtCore.QPointF(x, baseline), wrapped_line)
+                cursor_y += box.font_size + line_gap
 
     @staticmethod
     def _target_geometry(width: int, height: int) -> QtCore.QRect:

@@ -30,7 +30,7 @@ Use `.venv` / Python 3.10. Default system `python` may point to Python 3.13 and 
 - Run backend: `.venv/Scripts/python.exe services/translate_api/run.py`; serves `127.0.0.1:8765` and calls Ollama `translategemma:4b`.
 - Translator script: `scripts/trans-api/local_translate_gemma_4b.py` posts to `/v1/translate`; use with OCR Translator API menu for local Gemma.
 - Translate backend lifecycle lives in `src/game_ocr/translate_client.py`; mock `ensure_translate_backend`/`stop_owned_translate_backend` in app lifecycle tests.
-- Translate logging runs after result overlay closes in a daemon thread; preserve OCR/overlay behavior when backend or one translation unit fails.
+- Translated overlay translates units before display; backend/total failure falls back to source overlay, partial unit failure renders source for that unit.
 - Translate deps: `fastapi`, `uvicorn`, `pydantic` are runtime dependencies in `pyproject.toml`.
 - Verify backend: `.venv/Scripts/python.exe -m compileall services scripts/trans-api/local_translate_gemma_4b.py` and import `services.translate_api.app`.
 
@@ -84,6 +84,9 @@ Runtime flow:
 - Result overlay is topmost, same size as selected region, centered horizontally at ~75% screen height.
 - Overlay layout and OCR debug-log behavior are covered in `tests/test_ocr.py`.
 - OCR translation block grouping lives in `src/game_ocr/translation_blocks.py`; keep it pure and cover heuristics in `tests/test_translation_blocks.py`.
+- Source overlay uses `layout_lines_for_display()`; translated overlay uses `layout_translated_blocks_for_display()` and `DisplayTextBox`.
+- Translated layout tests run without QApplication; guard Qt font metrics or use deterministic width estimates in pure tests.
+- Translated overlay logs should include backend/model, block/unit counts, fallback reason, per-block bbox, completion, target box, font, align, wrap count, overflow/overlap.
 
 ## Testing Notes
 
@@ -113,6 +116,13 @@ Before changing translate lifecycle/grouping, run:
 .venv/Scripts/python.exe -m pytest tests/test_translate_client.py tests/test_translation_blocks.py tests/test_app.py
 ```
 
+Before changing translated overlay flow/layout, run:
+
+```bash
+.venv/Scripts/python.exe -m pytest tests/test_translation_blocks.py tests/test_ocr.py tests/test_app.py
+.venv/Scripts/python.exe -m compileall src tests
+```
+
 ## Scope
 
 Keep MVP minimal unless explicitly requested:
@@ -131,7 +141,7 @@ Also keep UX minimal:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **game-ocr** (911 symbols, 1472 relationships, 33 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **game-ocr** (925 symbols, 1485 relationships, 33 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
