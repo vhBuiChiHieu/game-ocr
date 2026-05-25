@@ -1,6 +1,5 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pprint import pformat
 from time import perf_counter
 from typing import Any
 
@@ -35,10 +34,11 @@ class OcrEngine:
         start = perf_counter()
         result = self._ocr.predict(np.array(image), use_textline_orientation=False)
         elapsed_ms = (perf_counter() - start) * 1000
-        print(f"OCR model processing completed in {elapsed_ms:.0f} ms")
-        print(f"OCR model raw result:\n{pformat(result, width=120)}")
+        lines = extract_layout_lines(result)
         text = join_text_lines(extract_text_lines(result))
-        return OcrResult(text=text, lines=extract_layout_lines(result))
+        print(f"OCR model processing completed in {elapsed_ms:.0f} ms")
+        print(_format_ocr_debug_summary(lines))
+        return OcrResult(text=text, lines=lines)
 
 
 def extract_text_lines(result: Any) -> list[str]:
@@ -139,6 +139,21 @@ def _box_to_bounds(box: Any) -> tuple[int, int, int, int] | None:
 
 def join_text_lines(lines: Iterable[str]) -> str:
     return "\n".join(line.strip() for line in lines if line.strip())
+
+
+def _format_ocr_debug_summary(lines: list[OcrLine]) -> str:
+    if not lines:
+        return "OCR result: 0 lines"
+
+    preview_lines = lines[:20]
+    summary = [f"OCR result: {len(lines)} lines"]
+    for index, line in enumerate(preview_lines, start=1):
+        summary.append(
+            f"  {index}. box=({line.left},{line.top},{line.right},{line.bottom}) text={line.text!r}"
+        )
+    if len(lines) > len(preview_lines):
+        summary.append(f"  ... {len(lines) - len(preview_lines)} more lines")
+    return "\n".join(summary)
 
 
 def _walk_result(value: Any) -> Iterable[Any]:

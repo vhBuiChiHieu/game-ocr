@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from statistics import median
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from game_ocr.capture import Region, normalize_region
 from game_ocr.ocr import OcrLine
+
+
+@dataclass(frozen=True)
+class DisplayLine:
+    text: str
+    x: int
+    y: int
+    font_size: int
 
 
 class SelectionOverlay(QtWidgets.QDialog):
@@ -88,10 +99,129 @@ class SelectionOverlay(QtWidgets.QDialog):
         painter.drawRect(self._selection)
 
 
+def layout_lines_for_display(lines: list[OcrLine], width: int, height: int) -> list[DisplayLine]:
+    if not lines:
+        return []
+
+    padding = 12
+    sorted_lines = sorted(lines, key=lambda line: (line.top, line.left))
+    line_heights = [max(1, line.bottom - line.top) for line in sorted_lines]
+    base_height = median(line_heights)
+    merge_gap_limit = max(16, int(base_height * 1.8))
+
+    rows: list[list[OcrLine]] = []
+    row_center_limit = max(6, int(base_height * 0.6))
+    for line in sorted_lines:
+        if rows:
+            row_top = min(row.top for row in rows[-1])
+            row_bottom = max(row.bottom for row in rows[-1])
+            row_center = (row_top + row_bottom) / 2
+            line_center = (line.top + line.bottom) / 2
+            overlaps_row = line.top <= row_bottom and line.bottom >= row_top
+            if overlaps_row or abs(line_center - row_center) <= row_center_limit:
+                rows[-1].append(line)
+                continue
+        rows.append([line])
+
+    row_heights = [int(median(max(1, line.bottom - line.top) for line in row)) for row in rows]
+    font_sizes = _font_size_buckets(row_heights, height, padding)
+
+    row_font_sizes = [_font_size_for_row(row, base_height, font_sizes) for row in rows]
+    row_tops = [min(line.top for line in row) for row in rows]
+    row_bottoms = [max(line.bottom for line in row) for row in rows]
+    row_gaps = _row_gaps(row_tops, row_bottoms, row_font_sizes, base_height)
+    row_font_sizes = _fit_row_font_sizes(row_font_sizes, row_gaps, height, padding)
+    row_gaps = _fit_row_gaps(row_font_sizes, row_gaps, height, padding)
+
+    display_lines: list[DisplayLine] = []
+    cursor_y = padding
+    for index, row in enumerate(rows):
+        row.sort(key=lambda line: line.left)
+        font_size = row_font_sizes[index]
+
+        segment_texts: list[str] = []
+        segment_left = row[0].left
+        segment_right = row[0].right
+        for line in row:
+            gap = line.left - segment_right
+            if segment_texts and gap > merge_gap_limit:
+                display_lines.append(
+                    _display_line(" ".join(segment_texts), segment_left, cursor_y, font_size, width, padding)
+                )
+                segment_texts = []
+                segment_left = line.left
+            segment_texts.append(line.text)
+            segment_right = max(segment_right, line.right)
+        if segment_texts:
+            display_lines.append(
+                _display_line(" ".join(segment_texts), segment_left, cursor_y, font_size, width, padding)
+            )
+
+        cursor_y += font_size
+        if index < len(row_gaps):
+            cursor_y += row_gaps[index]
+
+    return display_lines
+
+
+def _font_size_buckets(line_heights: list[int], overlay_height: int, padding: int) -> tuple[int, int, int]:
+    base_size = max(10, int(median(line_heights) * 0.95))
+    available_height = max(base_size, overlay_height - padding * 2)
+    scale = min(1.0, available_height / (len(line_heights) * int(base_size * 1.2)))
+    medium = max(10, int(base_size * scale))
+    small = max(9, int(medium * 0.78))
+    large = max(medium + 1, int(medium * 1.32))
+    return small, medium, large
+
+
+def _font_size_for_row(row: list[OcrLine], base_height: float, font_sizes: tuple[int, int, int]) -> int:
+    row_height = median(max(1, line.bottom - line.top) for line in row)
+    if row_height < base_height * 0.85:
+        return font_sizes[0]
+    if row_height > base_height * 1.25:
+        return font_sizes[2]
+    return font_sizes[1]
+
+
+def _row_gaps(row_tops: list[int], row_bottoms: list[int], font_sizes: list[int], base_height: float) -> list[int]:
+    gaps: list[int] = []
+    for index in range(1, len(row_tops)):
+        source_gap = max(0, row_tops[index] - row_bottoms[index - 1])
+        normal_gap = max(2, int(min(font_sizes[index - 1], font_sizes[index]) * 0.22))
+        large_gap = max(normal_gap, int(min(source_gap, base_height * 1.2) * 0.55))
+        gaps.append(large_gap if source_gap > base_height * 1.6 else normal_gap)
+    return gaps
+
+
+def _fit_row_font_sizes(font_sizes: list[int], gaps: list[int], height: int, padding: int) -> list[int]:
+    available_height = max(1, height - padding * 2 - sum(gaps))
+    total_font_height = sum(font_sizes)
+    if total_font_height <= available_height:
+        return font_sizes
+    scale = available_height / total_font_height
+    return [max(8, int(font_size * scale)) for font_size in font_sizes]
+
+
+def _fit_row_gaps(font_sizes: list[int], gaps: list[int], height: int, padding: int) -> list[int]:
+    available_gap_height = height - padding * 2 - sum(font_sizes)
+    if not gaps or sum(gaps) <= available_gap_height:
+        return gaps
+    if available_gap_height <= 0:
+        return [0 for _ in gaps]
+    scale = available_gap_height / sum(gaps)
+    return [max(1, int(gap * scale)) for gap in gaps]
+
+
+def _display_line(text: str, left: int, y: int, font_size: int, width: int, padding: int) -> DisplayLine:
+    max_x = max(padding, width - padding)
+    x = max(padding, min(left, max_x))
+    return DisplayLine(text=text.strip(), x=x, y=y, font_size=font_size)
+
+
 class ResultOverlay(QtWidgets.QDialog):
     def __init__(self, lines: list[OcrLine], width: int, height: int) -> None:
         super().__init__()
-        self._lines = lines
+        self._lines = layout_lines_for_display(lines, width, height)
 
         self.setWindowFlags(
             QtCore.Qt.WindowType.FramelessWindowHint
@@ -130,11 +260,10 @@ class ResultOverlay(QtWidgets.QDialog):
         painter.setPen(QtGui.QColor(255, 255, 255))
         font = QtGui.QFont("Segoe UI")
         for line in self._lines:
-            height = max(1, line.bottom - line.top)
-            font.setPixelSize(max(10, int(height * 0.95)))
+            font.setPixelSize(line.font_size)
             painter.setFont(font)
-            baseline = line.top + QtGui.QFontMetricsF(font).ascent()
-            painter.drawText(QtCore.QPointF(line.left, baseline), line.text)
+            baseline = line.y + QtGui.QFontMetricsF(font).ascent()
+            painter.drawText(QtCore.QPointF(line.x, baseline), line.text)
 
     @staticmethod
     def _target_geometry(width: int, height: int) -> QtCore.QRect:
