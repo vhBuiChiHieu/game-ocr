@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 from dataclasses import dataclass
 
 from PySide6 import QtCore, QtWidgets
@@ -12,7 +13,9 @@ from game_ocr.clipboard import copy_text
 from game_ocr.config import GPU_REQUIRED_ERROR, HOTKEY
 from game_ocr.hotkeys import HotkeyRegistration, register_capture_hotkey
 from game_ocr.logging_config import configure_file_logging, daily_log_path
-from game_ocr.ocr import OcrEngine
+from game_ocr.ocr import OcrEngine, OcrResult
+from game_ocr.translate_client import TranslateBackendState, ensure_translate_backend, stop_owned_translate_backend, translate_text
+from game_ocr.translation_blocks import TranslationGrouping, build_translation_blocks
 from game_ocr.ui import notify
 from game_ocr.ui.overlay import ResultOverlay, SelectionOverlay
 from game_ocr.ui.tray import TrayIcon, start_tray_icon
@@ -28,9 +31,10 @@ class GpuStatus:
 class CaptureController(QtCore.QObject):
     capture_requested = QtCore.Signal()
 
-    def __init__(self, ocr_engine: OcrEngine) -> None:
+    def __init__(self, ocr_engine: OcrEngine, translate_backend: TranslateBackendState | None = None) -> None:
         super().__init__()
         self._ocr_engine = ocr_engine
+        self._translate_backend = translate_backend
         self._active = False
         self.capture_requested.connect(self._run_capture_flow)
 
@@ -64,6 +68,7 @@ class CaptureController(QtCore.QObject):
             notify.show_success(ocr_result.text)
             ResultOverlay.show_result(ocr_result.lines, region)
             logger.info("OCR result overlay closed.")
+            _start_translation_logging(ocr_result, region.width, region.height, self._translate_backend)
         except Exception as exc:
             notify.show_error(str(exc))
             logger.exception("OCR capture failed")
@@ -71,9 +76,93 @@ class CaptureController(QtCore.QObject):
             self._active = False
 
 
+def _start_translation_logging(
+    ocr_result: OcrResult,
+    width: int,
+    height: int,
+    translate_backend: TranslateBackendState | None,
+) -> threading.Thread:
+    worker = threading.Thread(
+        target=_log_translation_blocks,
+        args=(ocr_result, width, height, translate_backend),
+        daemon=True,
+        name="ocr-translate-logger",
+    )
+    worker.start()
+    return worker
+
+
+def _log_translation_blocks(
+    ocr_result: OcrResult,
+    width: int,
+    height: int,
+    translate_backend: TranslateBackendState | None,
+) -> None:
+    grouping = build_translation_blocks(ocr_result.lines, width=width, height=height)
+    backend_label = "ready" if translate_backend and translate_backend.ready else "degraded"
+    model = translate_backend.model if translate_backend else "unknown"
+    logger.info(
+        "Translate grouping: source_lines=%s rows=%s blocks=%s units=%s backend=%s model=%s",
+        grouping.source_line_count,
+        grouping.row_count,
+        len(grouping.blocks),
+        len(grouping.units),
+        backend_label,
+        model,
+    )
+    _log_grouping_edges(grouping)
+    if not translate_backend or not translate_backend.ready:
+        reason = translate_backend.reason if translate_backend else "backend unavailable"
+        logger.warning("Translate logging skipped: %s", reason)
+        return
+
+    for unit in grouping.units:
+        bbox = (unit.left, unit.top, unit.right, unit.bottom)
+        try:
+            translated = translate_text(unit.text)
+        except Exception as exc:
+            logger.warning(
+                "Translate block %s failed role=%s bbox=%s error=%r\n  source: %s",
+                unit.index,
+                unit.role,
+                bbox,
+                str(exc),
+                unit.text,
+            )
+            continue
+        logger.info(
+            "Translate block %s role=%s bbox=%s rows=%s reason=%r\n  source: %s\n  vi: %s",
+            unit.index,
+            unit.role,
+            bbox,
+            _block_row_count(grouping, unit.block_index),
+            ",".join(unit.reasons),
+            unit.text,
+            translated,
+        )
+
+
+def _log_grouping_edges(grouping: TranslationGrouping) -> None:
+    if not grouping.edges:
+        return
+    lines = ["Translate grouping edges:"]
+    for edge in grouping.edges:
+        action = "merge" if edge.merge else "split"
+        lines.append(f"  edge {edge.previous}->{edge.next} score={edge.score} {action} reasons={list(edge.reasons)!r}")
+    logger.debug("\n%s", "\n".join(lines))
+
+
+def _block_row_count(grouping: TranslationGrouping, block_index: int) -> int:
+    for block in grouping.blocks:
+        if block.index == block_index:
+            return len(block.rows)
+    return 0
+
+
 def run() -> int:
+    log_path = daily_log_path()
     if os.environ.get("GAME_OCR_DETACHED") == "1":
-        configure_file_logging(daily_log_path())
+        configure_file_logging(log_path)
     else:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", force=True)
     try:
@@ -84,8 +173,9 @@ def run() -> int:
         logger.exception("Game OCR startup failed")
         return 1
 
+    translate_backend = ensure_translate_backend(log_path=log_path if os.environ.get("GAME_OCR_DETACHED") == "1" else None)
     qt_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    controller = CaptureController(ocr_engine)
+    controller = CaptureController(ocr_engine, translate_backend)
     registration: HotkeyRegistration | None = None
     tray_icon: TrayIcon | None = None
     try:
@@ -98,6 +188,7 @@ def run() -> int:
             registration.unregister()
         if tray_icon is not None:
             tray_icon.stop()
+        stop_owned_translate_backend(translate_backend)
         logger.info("Game OCR stopped.")
 
 
