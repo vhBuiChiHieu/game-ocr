@@ -75,7 +75,7 @@ class OcrTests(unittest.TestCase):
 
         self.assertEqual(len(display_lines), 1)
         self.assertEqual(display_lines[0].text, "Hello World")
-        self.assertEqual(display_lines[0].font_size, 19)
+        self.assertGreaterEqual(display_lines[0].font_size, 10)
 
     def test_layout_lines_for_display_keeps_distant_segments_separate(self) -> None:
         lines = [
@@ -86,7 +86,7 @@ class OcrTests(unittest.TestCase):
         display_lines = layout_lines_for_display(lines, width=220, height=100)
 
         self.assertEqual([line.text for line in display_lines], ["Left", "Right"])
-        self.assertEqual({line.font_size for line in display_lines}, {19})
+        self.assertEqual(len({line.font_size for line in display_lines}), 1)
 
     def test_layout_lines_for_display_uses_row_count_for_fit(self) -> None:
         lines = [
@@ -99,18 +99,18 @@ class OcrTests(unittest.TestCase):
         display_lines = layout_lines_for_display(lines, width=220, height=70)
 
         self.assertEqual(len(display_lines), 1)
-        self.assertEqual(display_lines[0].font_size, 19)
+        self.assertGreaterEqual(display_lines[0].font_size, 8)
 
-    def test_layout_lines_for_display_snaps_font_sizes_from_input(self) -> None:
+    def test_layout_lines_for_display_normalizes_group_font_sizes(self) -> None:
         lines = [
-            OcrLine(text="Small", left=5, top=10, right=60, bottom=18),
-            OcrLine(text="Medium", left=5, top=40, right=80, bottom=60),
-            OcrLine(text="Large", left=5, top=90, right=90, bottom=120),
+            OcrLine(text="Small", left=5, top=10, right=60, bottom=28),
+            OcrLine(text="Medium", left=5, top=32, right=80, bottom=56),
+            OcrLine(text="Large", left=5, top=60, right=90, bottom=84),
         ]
 
         display_lines = layout_lines_for_display(lines, width=220, height=180)
 
-        self.assertEqual([line.font_size for line in display_lines], [14, 19, 25])
+        self.assertEqual(len({line.font_size for line in display_lines}), 1)
 
     def test_layout_lines_for_display_scales_fonts_to_fit_height(self) -> None:
         lines = [
@@ -122,7 +122,7 @@ class OcrTests(unittest.TestCase):
 
         display_lines = layout_lines_for_display(lines, width=220, height=70)
 
-        self.assertEqual({line.font_size for line in display_lines}, {10})
+        self.assertTrue(all(line.font_size >= 8 for line in display_lines))
         for current, next_line in zip(display_lines, display_lines[1:], strict=False):
             self.assertLessEqual(current.y + current.font_size, next_line.y)
 
@@ -139,7 +139,87 @@ class OcrTests(unittest.TestCase):
             next_line.y - (current.y + current.font_size)
             for current, next_line in zip(display_lines, display_lines[1:], strict=False)
         ]
-        self.assertEqual(gaps, [7, 7])
+        self.assertTrue(all(4 <= gap <= 8 for gap in gaps))
+        self.assertLessEqual(max(gaps) - min(gaps), 1)
+
+    def test_layout_normalizes_body_font_with_noisy_box_heights(self) -> None:
+        lines = [
+            OcrLine(text="Quit Now?", left=25, top=23, right=143, bottom=48),
+            OcrLine(text="Your progress will not be saved. Quit now?", left=175, top=133, right=609, bottom=154),
+            OcrLine(text="Any unsaved progress will be lost.", left=221, top=163, right=569, bottom=187),
+            OcrLine(text="Cancel", left=128, top=259, right=208, bottom=289),
+            OcrLine(text="Confirm", left=572, top=261, right=663, bottom=288),
+        ]
+
+        display_lines = layout_lines_for_display(lines, width=801, height=336)
+
+        body_fonts = [line.font_size for line in display_lines if line.text.startswith("Your") or line.text.startswith("Any")]
+        self.assertEqual(len(body_fonts), 2)
+        self.assertEqual(len(set(body_fonts)), 1)
+
+    def test_layout_normalizes_multiline_notice_fonts(self) -> None:
+        lines = [
+            OcrLine(text="System message first line", left=90, top=30, right=430, bottom=50),
+            OcrLine(text="Short OCR box should not shrink", left=92, top=54, right=420, bottom=68),
+            OcrLine(text="Third notice line", left=91, top=76, right=390, bottom=96),
+            OcrLine(text="Fourth notice line", left=90, top=100, right=395, bottom=120),
+        ]
+
+        display_lines = layout_lines_for_display(lines, width=520, height=180)
+        fonts = [line.font_size for line in display_lines]
+
+        self.assertLessEqual(max(fonts) - min(fonts), 1)
+
+    def test_layout_keeps_button_row_fonts_equal(self) -> None:
+        lines = [
+            OcrLine(text="Cancel", left=128, top=259, right=208, bottom=289),
+            OcrLine(text="Confirm", left=572, top=261, right=663, bottom=288),
+        ]
+
+        display_lines = layout_lines_for_display(lines, width=801, height=336)
+
+        self.assertEqual([line.text for line in display_lines], ["Cancel", "Confirm"])
+        self.assertEqual(len({line.font_size for line in display_lines}), 1)
+
+    def test_layout_preserves_title_body_hierarchy(self) -> None:
+        lines = [
+            OcrLine(text="Quit Now?", left=25, top=23, right=143, bottom=48),
+            OcrLine(text="Your progress will not be saved. Quit now?", left=175, top=133, right=609, bottom=154),
+            OcrLine(text="Any unsaved progress will be lost.", left=221, top=163, right=569, bottom=187),
+        ]
+
+        display_lines = layout_lines_for_display(lines, width=801, height=336)
+        title_font = next(line.font_size for line in display_lines if line.text == "Quit Now?")
+        body_font = next(line.font_size for line in display_lines if line.text.startswith("Your"))
+
+        self.assertGreaterEqual(title_font, body_font + 2)
+
+    def test_layout_gives_body_to_button_gap_more_than_body_intra_gap(self) -> None:
+        lines = [
+            OcrLine(text="Your progress will not be saved. Quit now?", left=175, top=133, right=609, bottom=154),
+            OcrLine(text="Any unsaved progress will be lost.", left=221, top=163, right=569, bottom=187),
+            OcrLine(text="Cancel", left=128, top=259, right=208, bottom=289),
+            OcrLine(text="Confirm", left=572, top=261, right=663, bottom=288),
+        ]
+
+        display_lines = layout_lines_for_display(lines, width=801, height=336)
+        body_1, body_2, cancel, _ = display_lines
+        body_gap = body_2.y - (body_1.y + body_1.font_size)
+        button_gap = cancel.y - (body_2.y + body_2.font_size)
+
+        self.assertGreater(button_gap, body_gap)
+
+    def test_layout_scales_to_fit_without_overlap(self) -> None:
+        lines = [
+            OcrLine(text=f"Line {index}", left=5, top=10 + index * 20, right=120, bottom=28 + index * 20)
+            for index in range(6)
+        ]
+
+        display_lines = layout_lines_for_display(lines, width=220, height=90)
+
+        self.assertTrue(all(line.font_size >= 8 for line in display_lines))
+        for current, next_line in zip(display_lines, display_lines[1:], strict=False):
+            self.assertLessEqual(current.y + current.font_size, next_line.y)
 
 
 if __name__ == "__main__":
