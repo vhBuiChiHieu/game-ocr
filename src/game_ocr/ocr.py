@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from time import perf_counter
@@ -7,6 +8,8 @@ import numpy as np
 from PIL import Image
 
 from game_ocr.ocr_config import load_ocr_config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,8 +39,8 @@ class OcrEngine:
         elapsed_ms = (perf_counter() - start) * 1000
         lines = extract_layout_lines(result)
         text = join_text_lines(extract_text_lines(result))
-        print(f"OCR model processing completed in {elapsed_ms:.0f} ms")
-        print(_format_ocr_debug_summary(lines))
+        logger.info("OCR model processing completed in %.0f ms", elapsed_ms)
+        logger.info("\n%s", _format_ocr_debug_summary(lines))
         return OcrResult(text=text, lines=lines)
 
 

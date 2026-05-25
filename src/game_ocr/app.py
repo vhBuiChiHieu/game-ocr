@@ -44,18 +44,26 @@ class CaptureController(QtCore.QObject):
             return
         self._active = True
         try:
+            logger.info("OCR capture flow started.")
             region = SelectionOverlay.select_region()
             if region is None:
+                logger.info("OCR capture canceled before region selection completed.")
                 notify.show_cancel()
                 return
+            logger.info("OCR capture region: xy=(%s,%s) size=%sx%s", region.left, region.top, region.width, region.height)
             image = capture_region(region)
+            logger.info("OCR screenshot captured: size=%sx%s mode=%s", image.width, image.height, image.mode)
             ocr_result = self._ocr_engine.read_text(image)
+            logger.info("OCR text summary: chars=%s lines=%s", len(ocr_result.text), len(ocr_result.lines))
             if not ocr_result.text:
+                logger.info("OCR result contained no text; skipping clipboard and result overlay.")
                 notify.show_no_text()
                 return
             copy_text(ocr_result.text)
+            logger.info("OCR text copied to clipboard.")
             notify.show_success(ocr_result.text)
             ResultOverlay.show_result(ocr_result.lines, region)
+            logger.info("OCR result overlay closed.")
         except Exception as exc:
             notify.show_error(str(exc))
             logger.exception("OCR capture failed")

@@ -126,7 +126,7 @@ class OcrTests(unittest.TestCase):
         for current, next_line in zip(display_lines, display_lines[1:], strict=False):
             self.assertLessEqual(current.y + current.font_size, next_line.y)
 
-    def test_layout_lines_for_display_uses_compact_line_gap(self) -> None:
+    def test_layout_lines_for_display_uses_readable_line_gap(self) -> None:
         lines = [
             OcrLine(text="One", left=5, top=10, right=60, bottom=30),
             OcrLine(text="Two", left=5, top=32, right=60, bottom=52),
@@ -139,7 +139,7 @@ class OcrTests(unittest.TestCase):
             next_line.y - (current.y + current.font_size)
             for current, next_line in zip(display_lines, display_lines[1:], strict=False)
         ]
-        self.assertEqual(gaps, [4, 4])
+        self.assertEqual(gaps, [7, 7])
 
 
 if __name__ == "__main__":

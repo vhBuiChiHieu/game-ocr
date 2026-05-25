@@ -27,19 +27,28 @@ class MainTests(unittest.TestCase):
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(__main__, "daily_log_path", return_value=log_path),
             mock.patch.object(Path, "mkdir") as mkdir,
-            mock.patch.object(Path, "open", mock.mock_open()) as path_open,
+            mock.patch.object(__main__, "_detached_python_executable", return_value=sys.executable),
             mock.patch.object(__main__.subprocess, "Popen") as popen,
         ):
             result = __main__.main()
 
         self.assertEqual(result, 0)
         mkdir.assert_called_once_with(parents=True, exist_ok=True)
-        path_open.assert_called_once_with("a", encoding="utf-8")
         args, kwargs = popen.call_args
-        self.assertEqual(args[0], [sys.executable, "-m", "game_ocr"])
+        self.assertEqual(args[0], [sys.executable, "-u", "-m", "game_ocr"])
         self.assertEqual(kwargs["env"]["GAME_OCR_DETACHED"], "1")
         self.assertIs(kwargs["stdin"], __main__.subprocess.DEVNULL)
-        self.assertEqual(kwargs["stdout"], kwargs["stderr"])
+        self.assertIs(kwargs["stdout"], __main__.subprocess.DEVNULL)
+        self.assertIs(kwargs["stderr"], __main__.subprocess.DEVNULL)
+
+    def test_detached_python_executable_prefers_pythonw(self) -> None:
+        with (
+            mock.patch.object(__main__.sys, "executable", r"C:\\Python310\\python.exe"),
+            mock.patch.object(Path, "exists", return_value=True),
+        ):
+            executable = __main__._detached_python_executable()
+
+        self.assertEqual(executable, r"C:\Python310\pythonw.exe")
 
     def test_daily_log_path_uses_logs_dir_and_current_date(self) -> None:
         with mock.patch("game_ocr.logging_config.date") as fake_date:

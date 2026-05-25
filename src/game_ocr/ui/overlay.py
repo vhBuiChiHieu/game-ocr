@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from statistics import median
 
@@ -7,6 +8,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from game_ocr.capture import Region, normalize_region
 from game_ocr.ocr import OcrLine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,7 @@ def layout_lines_for_display(lines: list[OcrLine], width: int, height: int) -> l
     row_tops = [min(line.top for line in row) for row in rows]
     row_bottoms = [max(line.bottom for line in row) for row in rows]
     row_gaps = _row_gaps(row_tops, row_bottoms, row_font_sizes, base_height)
+    row_gaps = _fit_row_gaps(row_font_sizes, row_gaps, height, padding)
     row_font_sizes = _fit_row_font_sizes(row_font_sizes, row_gaps, height, padding)
     row_gaps = _fit_row_gaps(row_font_sizes, row_gaps, height, padding)
 
@@ -161,7 +165,65 @@ def layout_lines_for_display(lines: list[OcrLine], width: int, height: int) -> l
         if index < len(row_gaps):
             cursor_y += row_gaps[index]
 
+    logger.info(
+        "\n%s",
+        _format_overlay_layout_debug_summary(
+            lines=sorted_lines,
+            rows=rows,
+            display_lines=display_lines,
+            row_heights=row_heights,
+            row_tops=row_tops,
+            row_bottoms=row_bottoms,
+            row_font_sizes=row_font_sizes,
+            row_gaps=row_gaps,
+            font_sizes=font_sizes,
+            width=width,
+            height=height,
+            padding=padding,
+            base_height=base_height,
+            merge_gap_limit=merge_gap_limit,
+            row_center_limit=row_center_limit,
+        ),
+    )
     return display_lines
+
+
+def _format_overlay_layout_debug_summary(
+    *,
+    lines: list[OcrLine],
+    rows: list[list[OcrLine]],
+    display_lines: list[DisplayLine],
+    row_heights: list[int],
+    row_tops: list[int],
+    row_bottoms: list[int],
+    row_font_sizes: list[int],
+    row_gaps: list[int],
+    font_sizes: tuple[int, int, int],
+    width: int,
+    height: int,
+    padding: int,
+    base_height: float,
+    merge_gap_limit: int,
+    row_center_limit: int,
+) -> str:
+    summary = [
+        "Result overlay layout:",
+        f"  source_lines={len(lines)} rows={len(rows)} display_lines={len(display_lines)} size={width}x{height}",
+        f"  base_height={base_height:.1f} padding={padding} font_buckets={font_sizes}",
+        f"  row_center_limit={row_center_limit} merge_gap_limit={merge_gap_limit}",
+        f"  row_heights={row_heights[:20]} row_tops={row_tops[:20]} row_bottoms={row_bottoms[:20]}",
+        f"  row_font_sizes={row_font_sizes[:20]} row_gaps={row_gaps[:20]}",
+    ]
+    for index, row in enumerate(rows[:20], start=1):
+        texts = " | ".join(line.text for line in row)
+        summary.append(f"  row {index}: segments={len(row)} text={texts!r}")
+    if len(rows) > 20:
+        summary.append(f"  ... {len(rows) - 20} more rows")
+    for index, line in enumerate(display_lines[:20], start=1):
+        summary.append(f"  display {index}: xy=({line.x},{line.y}) font={line.font_size} text={line.text!r}")
+    if len(display_lines) > 20:
+        summary.append(f"  ... {len(display_lines) - 20} more display lines")
+    return "\n".join(summary)
 
 
 def _font_size_buckets(line_heights: list[int], overlay_height: int, padding: int) -> tuple[int, int, int]:
@@ -187,9 +249,9 @@ def _row_gaps(row_tops: list[int], row_bottoms: list[int], font_sizes: list[int]
     gaps: list[int] = []
     for index in range(1, len(row_tops)):
         source_gap = max(0, row_tops[index] - row_bottoms[index - 1])
-        normal_gap = max(2, int(min(font_sizes[index - 1], font_sizes[index]) * 0.22))
-        large_gap = max(normal_gap, int(min(source_gap, base_height * 1.2) * 0.55))
-        gaps.append(large_gap if source_gap > base_height * 1.6 else normal_gap)
+        font_gap = max(4, int(min(font_sizes[index - 1], font_sizes[index]) * 0.4))
+        source_gap = min(source_gap, int(base_height * 1.4))
+        gaps.append(max(font_gap, int(source_gap * 0.65)))
     return gaps
 
 
@@ -231,7 +293,16 @@ class ResultOverlay(QtWidgets.QDialog):
         self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        self.setGeometry(self._target_geometry(width, height))
+        geometry = self._target_geometry(width, height)
+        logger.info(
+            "Result overlay window: xy=(%s,%s) size=%sx%s lines=%s",
+            geometry.x(),
+            geometry.y(),
+            geometry.width(),
+            geometry.height(),
+            len(self._lines),
+        )
+        self.setGeometry(geometry)
 
     @classmethod
     def show_result(cls, lines: list[OcrLine], region: Region) -> None:

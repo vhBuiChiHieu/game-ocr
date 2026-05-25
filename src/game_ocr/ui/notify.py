@@ -1,17 +1,21 @@
+import logging
+
 from game_ocr.config import CANCEL_MESSAGE, NO_TEXT_MESSAGE, SUCCESS_PREFIX
+
+logger = logging.getLogger(__name__)
 
 
 def show_success(text: str) -> None:
-    print(f"{SUCCESS_PREFIX} {text}")
+    logger.info("%s %s", SUCCESS_PREFIX, text)
 
 
 def show_no_text() -> None:
-    print(NO_TEXT_MESSAGE)
+    logger.info("%s", NO_TEXT_MESSAGE)
 
 
 def show_cancel() -> None:
-    print(CANCEL_MESSAGE)
+    logger.info("%s", CANCEL_MESSAGE)
 
 
 def show_error(message: str) -> None:
-    print(f"OCR error: {message}")
+    logger.error("OCR error: %s", message)
