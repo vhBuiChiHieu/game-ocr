@@ -1,5 +1,7 @@
 # Local Claude/GitNexus state
-.claude/
+.claude/*
+!.claude/settings.json
+.claude/settings.local.json
 .gitnexus/
 
 # Python virtual environments
