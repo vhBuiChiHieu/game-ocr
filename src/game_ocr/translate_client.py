@@ -183,12 +183,18 @@ def _start_backend_process(
     script = script_path or Path(__file__).resolve().parents[2] / "services" / "translate_api" / "run.py"
     executable = python_executable or sys.executable
     command = [executable, str(script)]
+    # Suppress the conhost popup when game_ocr is launched as a detached child;
+    # without CREATE_NO_WINDOW the backend's python.exe attaches a fresh console.
+    popen_kwargs: dict[str, Any] = {}
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if creationflags:
+        popen_kwargs["creationflags"] = creationflags
     if log_path is None:
-        return popen_factory(command)
+        return popen_factory(command, **popen_kwargs)
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
-        return popen_factory(command, stdout=log_file, stderr=subprocess.STDOUT)
+        return popen_factory(command, stdout=log_file, stderr=subprocess.STDOUT, **popen_kwargs)
 
 
 def _health_degraded_reason(status: str, ollama_reachable: bool, model_ready: bool) -> str:

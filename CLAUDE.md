@@ -78,7 +78,8 @@ Runtime flow:
 - OCR call logs processing time plus bounded line/box summary; avoid full raw Paddle dumps in normal logs.
 - Detached launcher should lazy-import `game_ocr.app.run()` only in child mode so parent start returns fast.
 - Detached logging: keep `game_ocr` logger on its own append-close handler; stdout/stderr append-close separately so Paddle output cannot silence app logs.
-- Windows detached launcher may prefer `pythonw.exe` over `python.exe`; keep `python -u -m game_ocr` semantics when testing subprocess args.
+- Windows detached launcher must spawn the **base** `pythonw.exe` (`sys._base_executable` sibling), not the venv stub: uv-managed venvs re-exec `python.exe` from the stub, allocating a conhost popup. Pair the base spawn with `__PYVENV_LAUNCHER__=<venv python.exe>` so site-packages still resolves to the venv. Keep `python -u -m game_ocr` semantics when testing subprocess args.
+- Translate backend `Popen` in `translate_client._start_backend_process` must set `creationflags=CREATE_NO_WINDOW`; without it the venv `python.exe` running `services/translate_api/run.py` attaches a conhost window even when the game_ocr child runs under `pythonw`.
 - OCR result overlay should render line-level layout from `rec_texts` + `rec_boxes`; use word regions only as fallback.
 - Result overlay uses semantic groups for font/gap consistency: body rows share fonts, button segments match, debug logs include groups/roles/fonts/gaps.
 - Result overlay is topmost, same size as selected region, centered horizontally at ~75% screen height on the selection's monitor.
