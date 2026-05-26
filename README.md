@@ -149,6 +149,14 @@ File `ocr-config.json` ở thư mục gốc override các tham số `PaddleOCR(.
 
 Chỉ thêm key đã được whitelist trong `src/game_ocr/ocr_config.py`; key lạ sẽ làm app fail fast khi khởi động.
 
+### 7. Font overlay (tùy chọn)
+
+Thả file `.ttf` / `.otf` / `.ttc` vào thư mục `fonts/` ở gốc repo. Khi app khởi động, `font_config.load_application_fonts()` đăng ký toàn bộ font với `QFontDatabase`. Nếu `fonts/` có ít nhất một font hợp lệ, tray menu hiện submenu **Font** để chọn family hiển thị trên overlay (source + translated).
+
+- Lựa chọn được lưu vào `font-config.json` (`{"family": "<name>"}`) ở thư mục gốc — file này được gitignore (per-user state).
+- Mặc định khi không có font hoặc family lưu không còn tồn tại: `Segoe UI`.
+- Đổi font không cần restart; capture OCR kế tiếp đã dùng font mới.
+
 ## Chạy app
 
 ```powershell
@@ -171,7 +179,7 @@ python -m pytest tests\test_main.py tests\test_app.py     # launcher + app lifec
 python -m pytest tests\test_translate_client.py tests\test_translation_blocks.py
 ```
 
-`tests/test_ocr_image_samples.py` chạy OCR thật trên ảnh mẫu trong `tests/imgs/` và ghi log chi tiết; dùng cho tuning, không thuộc fast path.
+`tests/test_ocr_image_samples.py` chạy OCR thật trên ảnh mẫu trong `tests/imgs/` và ghi log chi tiết (`ocr_detail_*.log`) + render preview PNG (`overlay_source_*.png`, `overlay_translated_*.png`) để kiểm tra layout overlay không cần khởi động app. Output gitignored, ghi đè mỗi lần chạy; dùng cho tuning, không thuộc fast path.
 
 ## Troubleshooting
 
@@ -191,8 +199,10 @@ game-ocr/
 ├── src/game_ocr/            # App chính (entrypoint, OCR, UI overlay, tray, hotkey)
 ├── services/translate_api/  # FastAPI backend dịch (proxy → Ollama)
 ├── scripts/trans-api/       # CLI client cho translate backend
-├── tests/                   # pytest suite + ảnh mẫu OCR
+├── tests/                   # pytest suite + ảnh mẫu OCR + preview PNG
+├── fonts/                   # .ttf/.otf/.ttc cho overlay (tùy chọn)
 ├── ocr-config.json          # Override PaddleOCR runtime params
+├── font-config.json         # Font family đang chọn (gitignored)
 ├── pyproject.toml           # Build + dependencies
 └── logs/                    # Daily logs (sinh ra khi chạy)
 ```
