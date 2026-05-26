@@ -52,8 +52,7 @@ def _build_prompt(text: str, source_lang: str, target_lang: str) -> str:
     source_name = LANGUAGE_NAMES.get(source_code.lower(), source_code)
     target_name = LANGUAGE_NAMES.get(target_code.lower(), target_code)
     return (
-        f"You are a professional {source_name} ({source_code}) to {target_name} ({target_code}) translator specializing in video game UI text, menus, dialogue. "
-        f"Translate using terminology natural to gamers (e.g. Quit/Exit, Save, Confirm, Cancel), preserving in-game tone and concise UI phrasing. "
+        f"You are a professional {source_name} ({source_code}) to {target_name} ({target_code}) translator specializing in video game dialogue, text. "
         f"Your goal is to accurately convey the meaning and nuances of the original {source_name} text while adhering to {target_name} grammar, vocabulary, and cultural sensitivities.\n"
         f"Produce only the {target_name} translation, without any additional explanations or commentary. "
         f"Please translate the following {source_name} game text into {target_name}:\n\n"
