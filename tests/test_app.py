@@ -195,7 +195,7 @@ class AppTests(unittest.TestCase):
         show_result.assert_not_called()
         show_translated.assert_called_once()
         translated_blocks = show_translated.call_args.args[0]
-        self.assertEqual(translated_blocks[0].translated_text, "Hello there.\nBạn sẵn sàng chưa?")
+        self.assertEqual(translated_blocks[0].translated_text, "Hello there. Bạn sẵn sàng chưa?")
         self.assertEqual(calls, ["copy:Hello there. Are you ready?", "overlay"])
 
 

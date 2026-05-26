@@ -173,8 +173,10 @@ def compose_translated_blocks(grouping: TranslationGrouping, translations: Mappi
             else:
                 parts.append(unit.text)
                 complete = False
-        separator = " " if block.role in {"button", "menu_item", "speaker"} else "\n"
-        translated_text = separator.join(part for part in parts if part).strip() or block.text
+        # Join sentence-split units with a space so the overlay wrap algorithm
+        # can flow translated text by box width. Hard "\n" used to mask wrapping
+        # and forced multi-line layouts even when the box had spare horizontal room.
+        translated_text = " ".join(part for part in parts if part).strip() or block.text
         blocks.append(
             TranslatedBlock(
                 block_index=block.index,

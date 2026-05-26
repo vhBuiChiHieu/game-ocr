@@ -89,7 +89,10 @@ Runtime flow:
 - OCR translation block grouping lives in `src/game_ocr/translation_blocks.py`; keep it pure and cover heuristics in `tests/test_translation_blocks.py`.
 - Source overlay uses `layout_lines_for_display()`; translated overlay uses `layout_translated_blocks_for_display()` and `DisplayTextBox`.
 - Translated box width shrinks to the wrapped text width: lower bound is source bbox width (preserve spatial mapping), upper bound is the role-derived cap returned by `_translated_box_size`.
-- Translated collision resolver runs move-only passes first; if overlap remains, it refits the lower-priority candidate at a smaller `max_font` and re-runs the move pass. Buttons, titles, and speakers are protected from shrink.
+- Dialogue/body/notice roles use `available_w` (full overlay width minus padding) as the cap so the wrap algorithm can fill horizontally before adding lines; tiny regions still respect `available_w` so the box never overflows.
+- `compose_translated_blocks` joins sentence-split units inside a block with a single space (never `\n`); forcing `\n` previously masked the wrap algorithm and produced 2-line layouts even when the box had spare horizontal room.
+- Translated collision resolver runs move-only passes first; if overlap remains, it refits the lower-priority candidate at a smaller `max_font` and re-runs the move pass. Only buttons and titles are protected from shrink — speakers can shrink so dialogue readability wins. If the chosen target is already at min font, the resolver falls back to shrinking the other candidate in the pair before giving up.
+- Speaker boxes cap width at ~70% of overlay width (`_translated_box_size` role="speaker") to keep character-name translations on a single line; multi-line speaker boxes would otherwise dominate vertically and force the dialogue font down.
 - Translated box height and `_paint_boxes` step use `_translated_line_step ≈ font_size * 1.2` to cover ascent + descent; using bare `font_size` clips descenders below the computed box.
 - Translated layout tests run without QApplication; guard Qt font metrics or use deterministic width estimates in pure tests.
 - Translated overlay logs should include backend/model, block/unit counts, fallback reason, per-block bbox, completion, target box, font, align, wrap count, overflow/overlap.
@@ -147,7 +150,7 @@ Also keep UX minimal:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **game-ocr** (1075 symbols, 1776 relationships, 47 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **game-ocr** (1107 symbols, 1854 relationships, 55 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

@@ -286,11 +286,22 @@ def _actual_translated_width(wrapped: tuple[str, ...], font_size: int, source_w:
 
 def _translated_box_size(role: str, source_w: int, source_h: int, width: int, height: int, padding: int) -> tuple[int, int]:
     available_w = max(1, width - padding * 2)
-    if role in {"speaker", "title"}:
+    if role == "speaker":
+        # Speaker labels (character names) read best on one line. Allow the cap to
+        # grow up to ~70% of overlay width so VN translations rarely wrap, keeping
+        # the speaker box short vertically and leaving room for the dialogue.
+        box_w = min(available_w, max(source_w, round(source_w * 2.5), round(width * 0.7)))
+        box_h = round(source_h * 2.2)
+    elif role == "title":
         box_w = min(available_w, max(source_w, round(source_w * 1.8), round(width * 0.45)))
         box_h = round(source_h * 2.2)
     elif role in {"dialogue", "body", "notice"}:
-        box_w = min(available_w, max(source_w, round(width * 0.58)))
+        # Let dialogue/body/notice claim the full overlay width as the cap so the
+        # wrap algorithm gets max horizontal room. Final box width still shrinks
+        # to the wrapped text width via _actual_translated_width (lower bound = source_w),
+        # so short translations stay aligned with the source bbox. Hard upper bound
+        # stays at available_w so the box never overflows the overlay on tiny regions.
+        box_w = available_w
         box_h = round(source_h * 3.8)
     elif role == "button":
         box_w = min(available_w, max(source_w, min(round(source_w * 1.8), source_w + 100)))
@@ -400,7 +411,7 @@ def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], width
     # If any overlap survives the move-only loop, fall back to shrinking the
     # lower-priority candidate (font/width re-fit) and re-running the move pass.
     # Bounded to avoid runaway loops on adversarial input.
-    shrink_attempts = max(1, len(candidates) * 2)
+    shrink_attempts = max(1, len(candidates) * 4)
     for _ in range(shrink_attempts):
         pair = _find_overlapping_pair(candidates)
         if pair is None:
@@ -408,8 +419,16 @@ def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], width
         target = _pick_shrink_target(*pair)
         refit = _fit_translated_block(target.block, width, height, padding, max_font=target.font_size - 1)
         if refit.font_size >= target.font_size:
-            # Already at min readable font; cannot shrink further.
-            return
+            # Preferred target is already at min readable font. Try the OTHER
+            # candidate in the pair before giving up — protecting the priority
+            # role is only worthwhile while we still have a way to free space.
+            other = pair[0] if target is pair[1] else pair[1]
+            other_refit = _fit_translated_block(other.block, width, height, padding, max_font=other.font_size - 1)
+            if other_refit.font_size >= other.font_size:
+                return
+            candidates[candidates.index(other)] = other_refit
+            _translated_move_until_stable(candidates, height, padding)
+            continue
         index = candidates.index(target)
         candidates[index] = refit
         _translated_move_until_stable(candidates, height, padding)
@@ -465,8 +484,10 @@ def _find_overlapping_pair(candidates: list[_TranslatedCandidate]) -> tuple[_Tra
 
 
 def _pick_shrink_target(first: _TranslatedCandidate, second: _TranslatedCandidate) -> _TranslatedCandidate:
-    # Keep buttons / titles / speakers at their assigned size; shrink the other.
-    priority_roles = {"button", "title", "speaker"}
+    # Keep buttons / titles at their assigned size; shrink the other. Speakers
+    # are NOT protected: when dialogue collides with a speaker label, dialogue
+    # readability wins and the speaker yields (smaller font / narrower box).
+    priority_roles = {"button", "title"}
     first_priority = first.block.role in priority_roles
     second_priority = second.block.role in priority_roles
     if first_priority and not second_priority:
@@ -474,7 +495,9 @@ def _pick_shrink_target(first: _TranslatedCandidate, second: _TranslatedCandidat
     if second_priority and not first_priority:
         return first
     # Equal priority: shrink whichever currently occupies more vertical space
-    # (more text → more gain from a font step down).
+    # (more text → more gain from a font step down). Speaker boxes tend to
+    # dominate vertically when their VN translation wraps, so this naturally
+    # picks the speaker over the dialogue.
     return first if first.height >= second.height else second
 
 

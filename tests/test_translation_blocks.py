@@ -74,7 +74,7 @@ class TranslationBlockTests(unittest.TestCase):
         blocks = compose_translated_blocks(grouping, {1: "Xin chào.", 2: "Bạn sẵn sàng chưa?"})
 
         self.assertEqual(len(blocks), 1)
-        self.assertEqual(blocks[0].translated_text, "Xin chào.\nBạn sẵn sàng chưa?")
+        self.assertEqual(blocks[0].translated_text, "Xin chào. Bạn sẵn sàng chưa?")
         self.assertTrue(blocks[0].complete)
         self.assertTrue(translated_blocks_have_success(blocks))
 
@@ -84,7 +84,7 @@ class TranslationBlockTests(unittest.TestCase):
 
         blocks = compose_translated_blocks(grouping, {2: "Bạn sẵn sàng chưa?"})
 
-        self.assertEqual(blocks[0].translated_text, "Hello there.\nBạn sẵn sàng chưa?")
+        self.assertEqual(blocks[0].translated_text, "Hello there. Bạn sẵn sàng chưa?")
         self.assertFalse(blocks[0].complete)
         self.assertTrue(translated_blocks_have_success(blocks))
 

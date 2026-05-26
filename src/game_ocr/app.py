@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 
 from PySide6 import QtCore, QtWidgets
@@ -60,6 +61,8 @@ class CaptureController(QtCore.QObject):
                 notify.show_cancel()
                 return
             logger.info("OCR capture region: xy=(%s,%s) size=%sx%s", region.left, region.top, region.width, region.height)
+            # Start timer right after user finishes region selection; stop just before overlay is shown.
+            pipeline_start = time.perf_counter()
             image = capture_region(region)
             logger.info("OCR screenshot captured: size=%sx%s mode=%s", image.width, image.height, image.mode)
             ocr_result = self._ocr_engine.read_text(image)
@@ -73,9 +76,11 @@ class CaptureController(QtCore.QObject):
             notify.show_success(ocr_result.text)
             translated_blocks = _translate_ocr_result_for_overlay(ocr_result, region.width, region.height, self._translate_backend)
             if translated_blocks is None:
+                _log_pipeline_elapsed(pipeline_start, mode="source")
                 ResultOverlay.show_result(ocr_result.lines, region)
                 logger.info("OCR result overlay closed.")
             else:
+                _log_pipeline_elapsed(pipeline_start, mode="translated")
                 ResultOverlay.show_translated(translated_blocks, region)
                 logger.info("OCR translated result overlay closed.")
                 _log_translated_blocks(translated_blocks)
@@ -143,6 +148,13 @@ def _translate_ocr_result_for_overlay(
 
 def _log_translated_blocks(blocks: tuple[TranslatedBlock, ...]) -> None:
     logger.info("Translate overlay final blocks=%s complete=%s", len(blocks), sum(1 for block in blocks if block.complete))
+
+
+def _log_pipeline_elapsed(start: float, *, mode: str) -> None:
+    # Prominent banner so the region->overlay latency is easy to spot in daily logs.
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    banner = "=" * 12
+    logger.info("%s OCR PIPELINE %s elapsed=%.1f ms (region->overlay) %s", banner, mode.upper(), elapsed_ms, banner)
 
 
 def _start_translation_logging(
