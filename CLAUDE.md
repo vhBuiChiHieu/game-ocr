@@ -92,6 +92,7 @@ Runtime flow:
 - After `_fit_groups_to_height` scales fonts, `_resync_gaps_to_fonts` re-clamps intra/inter gaps so stale gap budgets do not reintroduce overflow.
 - Overlay layout and OCR debug-log behavior are covered in `tests/test_ocr.py`.
 - OCR translation block grouping lives in `src/game_ocr/translation_blocks.py`; keep it pure and cover heuristics in `tests/test_translation_blocks.py`.
+- `_hard_split` runs heading/speaker guards before the merge scorer. `_looks_like_heading_before_body` forces a split when prev row has no terminal punct, starts uppercase, len ≤ 40, `height ≥ median*0.95`, and `vertical_gap ≥ median*0.95`. Without it, a short section title (e.g. "Skills and Commands") merges into the next paragraph because `left_align + similar_height + no_terminal_punct` alone clears the `score ≥ 3` threshold (line 364). Tune thresholds carefully — paragraph wraps usually have `gap < median*0.8` so they stay merged.
 - Source overlay uses `layout_lines_for_display()`; translated overlay uses `layout_translated_blocks_for_display()` and `DisplayTextBox`.
 - Translated box width shrinks to the wrapped text width: lower bound is source bbox width (preserve spatial mapping), upper bound is the role-derived cap returned by `_translated_box_size`.
 - Dialogue/body/notice roles use `available_w` (full overlay width minus padding) as the cap so the wrap algorithm can fill horizontally before adding lines; tiny regions still respect `available_w` so the box never overflows.
@@ -119,7 +120,7 @@ Runtime flow:
 - `tests/test_capture.py` verifies drag direction normalization and rejects selections smaller than `MIN_REGION_SIZE`.
 - `tests/test_ocr_config.py` verifies missing config defaults to `{"lang": "en"}`, `null` values are ignored, and unsupported keys fail fast.
 - `tests/test_ocr.py` verifies PaddleOCR parsing, bounded logs, row/segment merging, semantic font consistency, compact gaps, and height fitting.
-- `tests/test_ocr_image_samples.py` runs real OCR against `tests/imgs/*` and writes `tests/imgs/ocr_detail_*.log`; use it for visual tuning evidence, not as the fast default unit path.
+- `tests/test_ocr_image_samples.py` runs real OCR against `tests/imgs/*` and writes `tests/imgs/ocr_detail_*.log`; use it for visual tuning evidence, not as the fast default unit path. It also renders `tests/imgs/overlay_source_*.png` and `tests/imgs/overlay_translated_*.png` (dark-grey background, white text via Pillow `ImageFont.truetype` using the first font in `fonts/`) so layout regressions can be eyeballed without launching the app. Previews are gitignored and overwrite per run. PIL pixel sizing differs slightly from Qt point sizing — treat the preview as approximate.
 - Keep sample detail logs capturing `layout_lines_for_display(...)` output so overlay group/role/font summaries appear in `captured_logs`.
 
 Before changing OCR parsing or overlay layout, run:

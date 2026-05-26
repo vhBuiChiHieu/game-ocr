@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from game_ocr.app import _translate_ocr_result_for_overlay
 from game_ocr.ocr import OcrEngine, _format_ocr_debug_summary
@@ -22,8 +22,13 @@ from game_ocr.translation_blocks import build_translation_blocks
 from game_ocr.ui.overlay import layout_lines_for_display, layout_translated_blocks_for_display
 
 IMAGES_DIR = Path(__file__).parent / "imgs"
+FONTS_DIR = Path(__file__).parent.parent / "fonts"
 RUNS_PER_IMAGE = 2
 TRANSLATE_STARTUP_TIMEOUT_SECONDS = 30.0
+# Overlay preview colors mirror the real Qt overlay (dark grey background, white text).
+PREVIEW_BG = (30, 30, 30)
+PREVIEW_TEXT = (240, 240, 240)
+PREVIEW_BOX_OUTLINE = (70, 70, 70)
 
 
 class OcrImageSampleTests(unittest.TestCase):
@@ -36,9 +41,10 @@ class OcrImageSampleTests(unittest.TestCase):
         )
         self.assertGreater(image_paths, [], "tests/imgs has no OCR sample images")
 
-        # Clear stale logs so failed reruns do not leave outdated artifacts behind.
-        for old_log in IMAGES_DIR.glob("ocr_detail_*.log"):
-            old_log.unlink()
+        # Clear stale logs / overlay previews so failed reruns do not leave outdated artifacts behind.
+        for pattern in ("ocr_detail_*.log", "overlay_source_*.png", "overlay_translated_*.png"):
+            for old in IMAGES_DIR.glob(pattern):
+                old.unlink()
 
         engine = OcrEngine()
         # Mirror real app startup: spawn the local translate backend (no-op if already up).
@@ -77,11 +83,21 @@ class OcrImageSampleTests(unittest.TestCase):
         ]
         lines: list[str] = list(header)
 
+        last_source_lines = None
+        last_translated_boxes = None
         for run_index in range(1, RUNS_PER_IMAGE + 1):
-            lines.extend(self._render_run(engine, translate_backend, image, width, height, run_index))
+            section, last_source_lines, last_translated_boxes = self._render_run(
+                engine, translate_backend, image, width, height, run_index
+            )
+            lines.extend(section)
 
         log_path.write_text("\n".join(lines), encoding="utf-8")
         self.assertTrue(log_path.exists())
+
+        # Render visual overlay previews from the most recent run so user can eyeball layout
+        # without launching the app. Files overwrite per run.
+        if last_source_lines is not None:
+            self._render_overlay_previews(image_path, width, height, last_source_lines, last_translated_boxes)
 
     def _render_run(
         self,
@@ -91,7 +107,7 @@ class OcrImageSampleTests(unittest.TestCase):
         width: int,
         height: int,
         run_index: int,
-    ) -> list[str]:
+    ) -> tuple[list[str], list, list | None]:
         # Capture both stdout and the game_ocr logger to mirror what the user sees in daily logs.
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
@@ -236,4 +252,65 @@ class OcrImageSampleTests(unittest.TestCase):
                 "",
             ]
         )
-        return section
+        translated_for_preview = translated_display_boxes if translated_blocks is not None else None
+        return section, source_display_lines, translated_for_preview
+
+    def _render_overlay_previews(
+        self,
+        image_path: Path,
+        width: int,
+        height: int,
+        source_display_lines: list,
+        translated_display_boxes: list | None,
+    ) -> None:
+        # Approximate Qt overlay rendering with Pillow so user can compare layouts without launching the app.
+        # Pixel vs point sizing differs slightly between Qt and PIL freetype, so the preview is "tương đối".
+        font_path = self._pick_preview_font()
+
+        source_preview = Image.new("RGB", (width, height), PREVIEW_BG)
+        source_draw = ImageDraw.Draw(source_preview)
+        for line in source_display_lines:
+            font = _load_preview_font(font_path, line.font_size)
+            source_draw.text((line.x, line.y), line.text, fill=PREVIEW_TEXT, font=font, anchor="lt")
+        source_preview.save(IMAGES_DIR / f"overlay_source_{image_path.stem}.png")
+
+        translated_preview = Image.new("RGB", (width, height), PREVIEW_BG)
+        translated_draw = ImageDraw.Draw(translated_preview)
+        if translated_display_boxes:
+            for box in translated_display_boxes:
+                x0, y0 = box.x, box.y
+                x1, y1 = x0 + box.width, y0 + box.height
+                # Thin outline marks the layout-computed box so visual checks can confirm box bounds.
+                translated_draw.rectangle([x0, y0, x1, y1], outline=PREVIEW_BOX_OUTLINE, width=1)
+                font = _load_preview_font(font_path, box.font_size)
+                # _translated_line_step ≈ font_size * 1.2 per CLAUDE.md.
+                line_step = max(int(round(box.font_size * 1.2)), box.font_size + 2)
+                for line_index, text in enumerate(box.wrapped_lines):
+                    ty = y0 + line_index * line_step
+                    if box.align == "center":
+                        text_bbox = translated_draw.textbbox((0, 0), text, font=font, anchor="lt")
+                        text_width = text_bbox[2] - text_bbox[0]
+                        tx = x0 + (box.width - text_width) // 2
+                    else:
+                        tx = x0
+                    translated_draw.text((tx, ty), text, fill=PREVIEW_TEXT, font=font, anchor="lt")
+        else:
+            # Fallback path: backend off or all translation failed → mark preview so it is obvious.
+            font = _load_preview_font(font_path, 16)
+            translated_draw.text((8, 8), "<translated overlay fallback>", fill=PREVIEW_TEXT, font=font, anchor="lt")
+        translated_preview.save(IMAGES_DIR / f"overlay_translated_{image_path.stem}.png")
+
+    def _pick_preview_font(self) -> Path | None:
+        if not FONTS_DIR.exists():
+            return None
+        for path in sorted(FONTS_DIR.iterdir()):
+            if path.suffix.lower() in {".ttf", ".otf"}:
+                return path
+        return None
+
+
+def _load_preview_font(font_path: Path | None, size: int) -> ImageFont.ImageFont:
+    pixel_size = max(8, int(size))
+    if font_path is not None:
+        return ImageFont.truetype(str(font_path), pixel_size)
+    return ImageFont.load_default()

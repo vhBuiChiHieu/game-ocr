@@ -32,3 +32,7 @@ AGENTS.md
 
 # Per-user font selection
 font-config.json
+
+# Generated overlay previews from tests/test_ocr_image_samples.py
+tests/imgs/overlay_source_*.png
+tests/imgs/overlay_translated_*.png

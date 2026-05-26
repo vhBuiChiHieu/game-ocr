@@ -390,6 +390,9 @@ def _hard_split(
     if _looks_like_speaker_before_body(previous, current, vertical_gap, median_height):
         reasons.append("speaker_label")
         split = True
+    if _looks_like_heading_before_body(previous, current, vertical_gap, median_height):
+        reasons.append("heading_before_body")
+        split = True
     return split
 
 
@@ -526,6 +529,31 @@ def _looks_like_bullet(text: str) -> bool:
 
 def _looks_like_speaker_before_body(previous: TextRow, current: TextRow, vertical_gap: float, median_height: float) -> bool:
     return len(previous.text) <= 16 and len(current.text) >= 20 and vertical_gap >= median_height * 0.6
+
+
+def _looks_like_heading_before_body(
+    previous: TextRow,
+    current: TextRow,
+    vertical_gap: float,
+    median_height: float,
+) -> bool:
+    # Standalone heading row: no terminal punct, starts with capital, no taller than a normal body line
+    # but separated from the next row by at least one full line-height. Without this, the merge scorer
+    # glues a title onto the following paragraph because left_align + similar_height + no_terminal_punct
+    # alone clears the merge threshold (see img_test_006: "Skills and Commands" + body).
+    if _ends_with_terminal(previous.text):
+        return False
+    if not _starts_upperish(previous.text):
+        return False
+    if len(previous.text) > 40:
+        return False
+    if previous.height < median_height * 0.95:
+        return False
+    if vertical_gap < median_height * 0.95:
+        return False
+    if len(current.text) < 12 and not _starts_upperish(current.text):
+        return False
+    return True
 
 
 def _both_short_labels(previous: TextRow, current: TextRow) -> bool:

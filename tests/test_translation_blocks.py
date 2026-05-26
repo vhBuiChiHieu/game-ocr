@@ -97,6 +97,34 @@ class TranslationBlockTests(unittest.TestCase):
         self.assertEqual(blocks[0].role, "button")
         self.assertEqual(blocks[0].translated_text, "Hủy. Bây giờ?")
 
+    def test_heading_row_splits_from_body_paragraph(self) -> None:
+        # Mirrors img_test_006: short heading row with no terminal punct sits one
+        # full line-height above a multi-row paragraph. Heading must stay its own
+        # block so the translated overlay keeps the section title separate.
+        lines = [
+            OcrLine(text="Skills and Commands", left=5, top=27, right=242, bottom=52),
+            OcrLine(
+                text=(
+                    "Skills are the primary workflow surface. They act like scoped workflow bundles: "
+                    "reusable prompts, structure, supporting files, and codemaps"
+                ),
+                left=5,
+                top=78,
+                right=992,
+                bottom=101,
+            ),
+            OcrLine(text="when you need a particular execution pattern.", left=7, top=106, right=332, bottom=123),
+        ]
+
+        grouping = build_translation_blocks(lines, width=1019, height=146)
+
+        self.assertEqual(len(grouping.blocks), 2)
+        self.assertEqual(grouping.blocks[0].text, "Skills and Commands")
+        self.assertTrue(grouping.blocks[1].text.startswith("Skills are the primary"))
+        heading_edge = grouping.edges[0]
+        self.assertFalse(heading_edge.merge)
+        self.assertIn("heading_before_body", heading_edge.reasons)
+
     def test_compose_translated_blocks_all_failed_has_no_success(self) -> None:
         lines = [OcrLine(text="Hello there.", left=10, top=10, right=200, bottom=30)]
         grouping = build_translation_blocks(lines, width=220, height=80)
