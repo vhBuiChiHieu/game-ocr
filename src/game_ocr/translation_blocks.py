@@ -465,6 +465,7 @@ def _split_sentences(text: str) -> list[str]:
         if _is_false_sentence_boundary(text, index):
             continue
         remaining = text[index + 1 :].lstrip()
+        # Skip splits with <2 chars left: avoids empty tail and single-char units that translate to noise.
         if len(remaining) < 2:
             continue
         candidate = remaining.lstrip("'\"“”‘’(")

@@ -142,7 +142,11 @@ def stop_owned_translate_backend(state: TranslateBackendState | None) -> None:
     except subprocess.TimeoutExpired:
         logger.warning("Translate backend did not terminate; killing owned process.")
         process.kill()
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # Kill rarely hangs but can on Windows if process is uninterruptible; surface and move on.
+            logger.error("Translate backend kill timed out; orphan process may remain.")
 
 
 def translate_text(text: str, source_lang: str = "en", target_lang: str = "vi", base_url: str = TRANSLATE_BASE_URL) -> str:

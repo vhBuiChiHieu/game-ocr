@@ -358,22 +358,43 @@ def _align_same_row_buttons(candidates: list[_TranslatedCandidate], width: int, 
 
 def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], height: int, padding: int) -> None:
     min_gap = 3
-    for previous, current in zip(candidates, candidates[1:], strict=False):
-        if not _translated_candidates_overlap(previous, current):
-            continue
-        overlap_y = previous.y + previous.height + min_gap - current.y
-        if overlap_y <= 0:
-            continue
-        if current.block.role == "button":
-            previous.y = max(padding, current.y - min_gap - previous.height)
-        else:
-            current.y = min(max(padding, height - padding - current.height), current.y + overlap_y)
-    for candidate in reversed(candidates[:-1]):
-        overlapping_next = [item for item in candidates if item.y > candidate.y and _translated_candidates_overlap(candidate, item)]
-        if not overlapping_next:
-            continue
-        next_candidate = min(overlapping_next, key=lambda item: item.y)
-        candidate.y = max(padding, next_candidate.y - min_gap - candidate.height)
+    # Cascading overlaps (A->B->C) need multiple passes; cap iterations to candidate count.
+    max_iterations = max(1, len(candidates))
+    for _ in range(max_iterations):
+        changed = False
+        # Forward: push current down, or pull previous up when current is a button.
+        for previous, current in zip(candidates, candidates[1:], strict=False):
+            if not _translated_candidates_overlap(previous, current):
+                continue
+            overlap_y = previous.y + previous.height + min_gap - current.y
+            if overlap_y <= 0:
+                continue
+            if current.block.role == "button":
+                new_y = max(padding, current.y - min_gap - previous.height)
+                if new_y != previous.y:
+                    previous.y = new_y
+                    changed = True
+            else:
+                new_y = min(max(padding, height - padding - current.height), current.y + overlap_y)
+                if new_y != current.y:
+                    current.y = new_y
+                    changed = True
+        # Reverse: pull earlier candidate up if it overlaps any later one (single closest below).
+        for candidate in reversed(candidates[:-1]):
+            next_candidate: _TranslatedCandidate | None = None
+            for item in candidates:
+                if item.y <= candidate.y or not _translated_candidates_overlap(candidate, item):
+                    continue
+                if next_candidate is None or item.y < next_candidate.y:
+                    next_candidate = item
+            if next_candidate is None:
+                continue
+            new_y = max(padding, next_candidate.y - min_gap - candidate.height)
+            if new_y != candidate.y:
+                candidate.y = new_y
+                changed = True
+        if not changed:
+            break
 
 
 def _translated_candidates_overlap(first: _TranslatedCandidate, second: _TranslatedCandidate) -> bool:
