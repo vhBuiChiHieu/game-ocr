@@ -7,6 +7,22 @@ Tiện ích OCR theo vùng màn hình dành cho Windows, tối ưu cho việc đ
 - **UI**: PySide6 (overlay drag-select + overlay kết quả) + tray icon (pystray).
 - **Hotkey mặc định**: `alt+shift+z`.
 
+## Minh họa
+
+Ảnh đầu vào (vùng capture):
+
+<p align="center">
+  <img src="docs/images/sample-input.png" alt="Input">
+</p>
+
+Overlay nguồn (text gốc giữ layout PaddleOCR) và overlay dịch (tiếng Việt từ backend Gemma) render từ ảnh trên:
+
+| Source overlay | Translated overlay |
+|---|---|
+| ![Source overlay](docs/images/overlay-source.png) | ![Translated overlay](docs/images/overlay-translated.png) |
+
+> Ảnh sinh bởi `tests/test_ocr_image_samples.py` (xem mục [Test](#test)).
+
 ## Yêu cầu hệ thống
 
 | Mục | Yêu cầu |
@@ -14,6 +30,7 @@ Tiện ích OCR theo vùng màn hình dành cho Windows, tối ưu cho việc đ
 | OS | Windows 10/11 |
 | Python | 3.10 (bắt buộc, không hỗ trợ 3.11+) |
 | GPU | NVIDIA với CUDA (PaddlePaddle GPU build phải nhận được CUDA) |
+| VRAM | ≥ 4 GB |
 | RAM | ≥ 8 GB khuyến nghị |
 | Disk | ~5–10 GB cho PaddleOCR models + Ollama model |
 
