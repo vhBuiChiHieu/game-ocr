@@ -222,7 +222,7 @@ def layout_translated_blocks_for_display(blocks: tuple[TranslatedBlock, ...], wi
     ordered = sorted(blocks, key=lambda block: (block.top, block.left))
     candidates = [_fit_translated_block(block, width, height, padding) for block in ordered]
     _align_same_row_buttons(candidates, width, height, padding)
-    _resolve_translated_collisions(candidates, height, padding)
+    _resolve_translated_collisions(candidates, width, height, padding)
     boxes = [
         DisplayTextBox(
             text=candidate.block.translated_text,
@@ -242,21 +242,46 @@ def layout_translated_blocks_for_display(blocks: tuple[TranslatedBlock, ...], wi
     return boxes
 
 
-def _fit_translated_block(block: TranslatedBlock, width: int, height: int, padding: int) -> _TranslatedCandidate:
+def _fit_translated_block(
+    block: TranslatedBlock,
+    width: int,
+    height: int,
+    padding: int,
+    max_font: int | None = None,
+) -> _TranslatedCandidate:
     source_w = max(1, block.right - block.left)
     source_h = max(1, block.bottom - block.top)
-    box_w, box_h = _translated_box_size(block.role, source_w, source_h, width, height, padding)
-    x, y = _translated_box_position(block, box_w, box_h, width, height, padding)
+    # Role-based box size acts as the upper cap; actual box_w shrinks to fit text.
+    cap_w, box_h = _translated_box_size(block.role, source_w, source_h, width, height, padding)
     align = _translated_align(block, width)
     preferred_font, min_font = _translated_font_range(block.role, source_h, height)
+    if max_font is not None:
+        preferred_font = max(min_font, min(preferred_font, max_font))
     for font_size in range(preferred_font, min_font - 1, -1):
-        wrapped = _wrap_translated_text(block.translated_text, font_size, box_w)
+        wrapped = _wrap_translated_text(block.translated_text, font_size, cap_w)
         needed_h = _translated_text_height(font_size, len(wrapped))
         if needed_h <= box_h:
-            return _TranslatedCandidate(block, x, y, box_w, needed_h, font_size, align, wrapped)
-    wrapped = _wrap_translated_text(block.translated_text, min_font, box_w)
+            actual_w = _actual_translated_width(wrapped, font_size, source_w, cap_w)
+            x, y = _translated_box_position(block, actual_w, needed_h, width, height, padding)
+            return _TranslatedCandidate(block, x, y, actual_w, needed_h, font_size, align, wrapped)
+    wrapped = _wrap_translated_text(block.translated_text, min_font, cap_w)
     needed_h = _translated_text_height(min_font, len(wrapped))
-    return _TranslatedCandidate(block, x, y, box_w, min(needed_h, height - padding * 2), min_font, align, wrapped, overflow=needed_h > box_h)
+    final_h = min(needed_h, height - padding * 2)
+    actual_w = _actual_translated_width(wrapped, min_font, source_w, cap_w)
+    x, y = _translated_box_position(block, actual_w, final_h, width, height, padding)
+    return _TranslatedCandidate(block, x, y, actual_w, final_h, min_font, align, wrapped, overflow=needed_h > box_h)
+
+
+def _actual_translated_width(wrapped: tuple[str, ...], font_size: int, source_w: int, cap_w: int) -> int:
+    # Shrink box width to whatever the wrapped text actually needs (plus the
+    # 8px slack used inside _wrap_translated_text). Never go narrower than the
+    # source bbox so the translated overlay still maps to the original area,
+    # and never wider than the role cap.
+    if not wrapped:
+        return min(source_w, cap_w)
+    widest = max(_translated_text_width(line, font_size) for line in wrapped)
+    desired = max(source_w, round(widest) + 8)
+    return max(1, min(desired, cap_w))
 
 
 def _translated_box_size(role: str, source_w: int, source_h: int, width: int, height: int, padding: int) -> tuple[int, int]:
@@ -370,7 +395,27 @@ def _align_same_row_buttons(candidates: list[_TranslatedCandidate], width: int, 
         button.x = _clamp_int(round(center_x - button.width / 2), padding, max(padding, width - padding - button.width))
 
 
-def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], height: int, padding: int) -> None:
+def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], width: int, height: int, padding: int) -> None:
+    _translated_move_until_stable(candidates, height, padding)
+    # If any overlap survives the move-only loop, fall back to shrinking the
+    # lower-priority candidate (font/width re-fit) and re-running the move pass.
+    # Bounded to avoid runaway loops on adversarial input.
+    shrink_attempts = max(1, len(candidates) * 2)
+    for _ in range(shrink_attempts):
+        pair = _find_overlapping_pair(candidates)
+        if pair is None:
+            return
+        target = _pick_shrink_target(*pair)
+        refit = _fit_translated_block(target.block, width, height, padding, max_font=target.font_size - 1)
+        if refit.font_size >= target.font_size:
+            # Already at min readable font; cannot shrink further.
+            return
+        index = candidates.index(target)
+        candidates[index] = refit
+        _translated_move_until_stable(candidates, height, padding)
+
+
+def _translated_move_until_stable(candidates: list[_TranslatedCandidate], height: int, padding: int) -> None:
     min_gap = 3
     # Cascading overlaps (A->B->C) need multiple passes; cap iterations to candidate count.
     max_iterations = max(1, len(candidates))
@@ -409,6 +454,28 @@ def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], heigh
                 changed = True
         if not changed:
             break
+
+
+def _find_overlapping_pair(candidates: list[_TranslatedCandidate]) -> tuple[_TranslatedCandidate, _TranslatedCandidate] | None:
+    for index, first in enumerate(candidates):
+        for second in candidates[index + 1 :]:
+            if _translated_candidates_overlap(first, second):
+                return first, second
+    return None
+
+
+def _pick_shrink_target(first: _TranslatedCandidate, second: _TranslatedCandidate) -> _TranslatedCandidate:
+    # Keep buttons / titles / speakers at their assigned size; shrink the other.
+    priority_roles = {"button", "title", "speaker"}
+    first_priority = first.block.role in priority_roles
+    second_priority = second.block.role in priority_roles
+    if first_priority and not second_priority:
+        return second
+    if second_priority and not first_priority:
+        return first
+    # Equal priority: shrink whichever currently occupies more vertical space
+    # (more text → more gain from a font step down).
+    return first if first.height >= second.height else second
 
 
 def _translated_candidates_overlap(first: _TranslatedCandidate, second: _TranslatedCandidate) -> bool:
