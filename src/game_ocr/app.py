@@ -12,6 +12,13 @@ from PySide6 import QtCore, QtWidgets
 from game_ocr.capture import capture_region
 from game_ocr.clipboard import copy_text
 from game_ocr.config import GPU_REQUIRED_ERROR, HOTKEY
+from game_ocr.font_config import (
+    active_family,
+    available_families,
+    load_application_fonts,
+    load_selected_font,
+    save_selected_font,
+)
 from game_ocr.hotkeys import HotkeyRegistration, register_capture_hotkey
 from game_ocr.logging_config import configure_file_logging, daily_log_path
 from game_ocr.ocr import OcrEngine, OcrResult
@@ -256,12 +263,22 @@ def run() -> int:
 
     translate_backend = ensure_translate_backend(log_path=log_path if os.environ.get("GAME_OCR_DETACHED") == "1" else None)
     qt_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    # Fonts must be registered after QApplication exists; saved selection is
+    # validated against the loaded set so a stale custom font name doesn't stick.
+    load_application_fonts()
+    load_selected_font()
+    logger.info("Active overlay font family: %r", active_family())
     controller = CaptureController(ocr_engine, translate_backend)
     registration: HotkeyRegistration | None = None
     tray_icon: TrayIcon | None = None
     try:
         registration = register_capture_hotkey(controller.request_capture)
-        tray_icon = start_tray_icon(lambda: QtCore.QMetaObject.invokeMethod(qt_app, "quit", QtCore.Qt.ConnectionType.QueuedConnection))
+        tray_icon = start_tray_icon(
+            lambda: QtCore.QMetaObject.invokeMethod(qt_app, "quit", QtCore.Qt.ConnectionType.QueuedConnection),
+            font_families=available_families(),
+            current_font=active_family,
+            on_font_selected=save_selected_font,
+        )
         logger.info("Game OCR running. Press %s to select a region. Use tray Exit to quit.", HOTKEY)
         return qt_app.exec()
     finally:

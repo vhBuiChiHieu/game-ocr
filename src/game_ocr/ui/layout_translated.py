@@ -6,6 +6,7 @@ from statistics import median
 
 from PySide6 import QtGui, QtWidgets
 
+from game_ocr.font_config import active_family
 from game_ocr.translation_blocks import TranslatedBlock
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,7 @@ def _wrap_translated_text(text: str, font_size: int, width: int) -> tuple[str, .
 
 def _translated_text_width(text: str, font_size: int) -> float:
     if QtWidgets.QApplication.instance() is not None:
-        font = QtGui.QFont("Segoe UI")
+        font = QtGui.QFont(active_family())
         font.setPixelSize(font_size)
         return QtGui.QFontMetricsF(font).horizontalAdvance(text)
     return len(text) * font_size * 0.55

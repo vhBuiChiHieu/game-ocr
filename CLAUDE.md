@@ -54,12 +54,13 @@ Use `.venv` / Python 3.10. Default system `python` may point to Python 3.13 and 
 | `src/game_ocr/capture.py` | screen-region capture |
 | `src/game_ocr/clipboard.py` | copies recognized text with `pyperclip` |
 | `src/game_ocr/hotkeys.py` | global hotkey registration |
+| `src/game_ocr/font_config.py` | discovers `fonts/` files, registers with `QFontDatabase`, persists active family to `font-config.json` |
 | `src/game_ocr/ui/widgets.py` | `SelectionOverlay` (drag-select) + `ResultOverlay` (source/translated paint); ESC closes both |
 | `src/game_ocr/ui/layout_source.py` | source-overlay layout: `DisplayLine`, `layout_lines_for_display`, group/font/gap fit |
 | `src/game_ocr/ui/layout_translated.py` | translated-overlay layout: `DisplayTextBox`, `layout_translated_blocks_for_display`, collision resolver |
 | `src/game_ocr/ui/overlay.py` | thin shim re-exporting public symbols from the three modules above (keeps `from game_ocr.ui.overlay import ...` stable) |
 | `src/game_ocr/ui/notify.py` | console feedback |
-| `src/game_ocr/ui/tray.py` | pystray icon lifecycle and Exit action |
+| `src/game_ocr/ui/tray.py` | pystray icon lifecycle, Exit action, and dynamic Font submenu |
 
 Runtime flow:
 
@@ -102,7 +103,16 @@ Runtime flow:
 - Translated layout tests run without QApplication; guard Qt font metrics or use deterministic width estimates in pure tests.
 - Translated overlay logs should include backend/model, block/unit counts, fallback reason, per-block bbox, completion, target box, font, align, wrap count, overflow/overlap.
 
-## Testing Notes
+## Font Notes
+
+- Drop `.ttf` / `.otf` / `.ttc` files into root `fonts/` directory; they are registered with `QFontDatabase` at app startup via `font_config.load_application_fonts()`. Default family stays `Segoe UI`.
+- `font_config.load_application_fonts()` MUST be called after `QApplication` is created (Qt requires it for font registration).
+- Active font is persisted to root `font-config.json` (`{"family": "<name>"}`) by `font_config.save_selected_font`. The file is gitignored — it is per-user state.
+- Tray icon shows a "Font" submenu when `fonts/` has any registered families. Selection invokes `save_selected_font(family)`, which both persists and updates the in-memory `_active_family`. The next OCR overlay paint reads the new family — no restart needed.
+- `widgets.ResultOverlay.paintEvent` and `layout_translated._translated_text_width` both call `font_config.active_family()` per invocation; do not cache the family name across captures.
+- A saved family that is no longer present in `fonts/` (file removed) silently falls back to the default — see `load_selected_font` validation.
+
+## Test Notes
 
 - `tests/test_main.py` verifies parent/child detached behavior and daily log path format.
 - `tests/test_app.py` verifies CUDA requirement, `gpu:0` selection, hotkey cleanup, tray cleanup, and queued Qt quit.
@@ -155,7 +165,7 @@ Also keep UX minimal:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **game-ocr** (1195 symbols, 1956 relationships, 56 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **game-ocr** (1237 symbols, 2025 relationships, 58 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

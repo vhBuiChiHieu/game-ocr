@@ -29,3 +29,6 @@ debug-captures/
 
 # local file
 AGENTS.md
+
+# Per-user font selection
+font-config.json

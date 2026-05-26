@@ -5,6 +5,7 @@ import logging
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from game_ocr.capture import Region, normalize_region
+from game_ocr.font_config import active_family
 from game_ocr.ocr import OcrLine
 from game_ocr.translation_blocks import TranslatedBlock
 
@@ -168,7 +169,8 @@ class ResultOverlay(QtWidgets.QDialog):
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
         painter.setPen(QtGui.QColor(255, 255, 255))
-        font = QtGui.QFont("Segoe UI")
+        # Re-resolve family per paint so tray font changes take effect on the next OCR.
+        font = QtGui.QFont(active_family())
         if self._boxes:
             self._paint_boxes(painter, font)
         else:
