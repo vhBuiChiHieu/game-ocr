@@ -79,6 +79,17 @@ def _fit_translated_block(
     cap_w, box_h = _translated_box_size(block.role, source_w, source_h, width, height, padding)
     align = _translated_align(block, width)
     preferred_font, min_font = _translated_font_range(block.role, source_h, height)
+    # Length-aware pre-shrink for speaker/title: when the translated text is meaningfully
+    # longer than the source label (typical for EN→VN), starting at source_h leaves the
+    # box visually ballooned. Scale preferred font down by 1/(1+0.3*(ratio-1)) so the
+    # final box width stays anchored near the source area while keeping the title readable.
+    if block.role in {"speaker", "title"}:
+        source_len = max(1, len(block.source_text))
+        translated_len = max(1, len(block.translated_text))
+        ratio = translated_len / source_len
+        if ratio > 1.2:
+            scale = 1.0 / (1.0 + 0.3 * (ratio - 1.0))
+            preferred_font = max(min_font, round(preferred_font * scale))
     if max_font is not None:
         preferred_font = max(min_font, min(preferred_font, max_font))
     for font_size in range(preferred_font, min_font - 1, -1):
@@ -111,14 +122,16 @@ def _actual_translated_width(wrapped: tuple[str, ...], font_size: int, source_w:
 def _translated_box_size(role: str, source_w: int, source_h: int, width: int, height: int, padding: int) -> tuple[int, int]:
     available_w = max(1, width - padding * 2)
     if role == "speaker":
-        # Speaker labels (character names) read best on one line. Allow the cap to
-        # grow up to ~70% of overlay width so VN translations rarely wrap, keeping
-        # the speaker box short vertically and leaving room for the dialogue.
-        box_w = min(available_w, max(source_w, round(source_w * 2.5), round(width * 0.7)))
-        box_h = round(source_h * 2.2)
+        # Tight cap anchored to source_w so the speaker box does not balloon on
+        # short labels with long VN translations. Limit to ~1.8x source_w (also
+        # capped at +100px absolute and 55% overlay width). Box height allows up
+        # to ~2 wrapped lines so the fit loop can preserve source-matched font
+        # by wrapping rather than aggressively shrinking.
+        box_w = min(available_w, round(width * 0.55), max(source_w, min(round(source_w * 1.8), source_w + 100)))
+        box_h = round(source_h * 3.0)
     elif role == "title":
-        box_w = min(available_w, max(source_w, round(source_w * 1.8), round(width * 0.45)))
-        box_h = round(source_h * 2.2)
+        box_w = min(available_w, round(width * 0.55), max(source_w, min(round(source_w * 1.8), source_w + 100)))
+        box_h = round(source_h * 3.0)
     elif role in {"dialogue", "body", "notice"}:
         # Let dialogue/body/notice claim the full overlay width as the cap so the
         # wrap algorithm gets max horizontal room. Final box width still shrinks
@@ -161,7 +174,11 @@ def _translated_align(block: TranslatedBlock, width: int) -> str:
 def _translated_font_range(role: str, source_h: int, height: int) -> tuple[int, int]:
     tiny_min = 8 if height < 90 else 10
     if role in {"speaker", "title"}:
-        return _clamp_int(round(source_h * 1.15), 12, 28), max(10, tiny_min)
+        # Match source line-height instead of boosting by 1.15x. Translated VN
+        # already runs longer than EN; growing the font on top of that makes the
+        # box balloon visually. Fit loop and length-aware pre-shrink can still
+        # reduce further when needed.
+        return _clamp_int(source_h, 12, 28), max(10, tiny_min)
     if role == "button":
         return _clamp_int(round(source_h * 1.05), 10, 24), tiny_min
     if role == "menu_item":
