@@ -191,7 +191,7 @@ def layout_lines_for_display(lines: list[OcrLine], width: int, height: int) -> l
     _assign_group_font_sizes(groups, width, height, median_height)
     _assign_group_gaps(groups, median_height)
     fit = _fit_groups_to_height(groups, height, padding)
-    display_lines, display_context = _build_display_lines(groups, width, padding)
+    display_lines, display_context = _build_display_lines(groups, width, padding, height)
 
     logger.info(
         "\n%s",
@@ -337,9 +337,23 @@ def _translated_text_width(text: str, font_size: int) -> float:
     return len(text) * font_size * 0.55
 
 
+def _translated_line_step(font_size: int) -> int:
+    # Real rendered line height ≈ ascent + descent ≈ font_size * 1.2.
+    # Using bare font_size leaves descenders of the last line below the computed box,
+    # which causes box-fitting to under-reserve space and translated text to clip.
+    return max(font_size, round(font_size * 1.2))
+
+
+def _translated_line_gap(font_size: int) -> int:
+    return max(2, round(font_size * 0.18))
+
+
 def _translated_text_height(font_size: int, line_count: int) -> int:
-    line_gap = max(2, round(font_size * 0.18))
-    return font_size * line_count + line_gap * max(0, line_count - 1)
+    if line_count <= 0:
+        return 0
+    line_step = _translated_line_step(font_size)
+    line_gap = _translated_line_gap(font_size)
+    return line_step * line_count + line_gap * max(0, line_count - 1)
 
 
 def _align_same_row_buttons(candidates: list[_TranslatedCandidate], width: int, height: int, padding: int) -> None:
@@ -739,6 +753,10 @@ def _fit_groups_to_height(groups: list[_LayoutGroup], overlay_height: int, paddi
         for group in groups:
             group.font_size = max(min_font, int(group.font_size * scale))
         _enforce_font_relationships(groups, min_font)
+        # Gaps were sized against the pre-scale font; re-clamp so they stay
+        # proportional to the shrunken font (otherwise large stale gaps eat the
+        # space we just freed and the layout still overflows).
+        _resync_gaps_to_fonts(groups)
 
     if _layout_total_height(groups, padding) > overlay_height:
         min_font = _minimum_readable_font(overlay_height)
@@ -791,6 +809,18 @@ def _total_gap_height(groups: list[_LayoutGroup]) -> int:
     return sum(group.intra_gap * max(0, len(group.rows) - 1) + group.inter_gap_after for group in groups)
 
 
+def _resync_gaps_to_fonts(groups: list[_LayoutGroup]) -> None:
+    # Keep gaps no larger than the original font-relative bound (`font_size * 0.30`,
+    # clamped 2–8 for intra; clamped 6 lower for inter). Only ever shrink — growing
+    # would undo `_reduce_gaps` and reintroduce overflow.
+    for group in groups:
+        if len(group.rows) > 1:
+            font_bound = _clamp_int(round(group.font_size * 0.30), 2, 8)
+            group.intra_gap = min(group.intra_gap, font_bound)
+        font_bound_inter = _clamp_int(round(group.font_size * 0.80), 6, 12)
+        group.inter_gap_after = min(group.inter_gap_after, font_bound_inter)
+
+
 def _minimum_readable_font(overlay_height: int) -> int:
     if overlay_height < 90:
         return 8
@@ -803,10 +833,19 @@ def _build_display_lines(
     groups: list[_LayoutGroup],
     width: int,
     padding: int,
+    overlay_height: int | None = None,
 ) -> tuple[list[DisplayLine], list[tuple[int, str]]]:
     display_lines: list[DisplayLine] = []
     display_context: list[tuple[int, str]] = []
+    # When content is shorter than overlay, center it vertically so text doesn't
+    # bunch at the top and leave a blank strip below.
     cursor_y = padding
+    if overlay_height is not None:
+        # _layout_total_height already includes padding*2, so slack here is
+        # the leftover vertical space after the whole padded block fits.
+        slack = overlay_height - _layout_total_height(groups, padding)
+        if slack > 0:
+            cursor_y += slack // 2
     for group_index, group in enumerate(groups, start=1):
         for row_index, row in enumerate(group.rows):
             for segment in row.segments:
@@ -885,6 +924,7 @@ class ResultOverlay(QtWidgets.QDialog):
         width: int,
         height: int,
         translated_blocks: tuple[TranslatedBlock, ...] = (),
+        region: Region | None = None,
     ) -> None:
         super().__init__()
         self._lines = [] if translated_blocks else layout_lines_for_display(lines or [], width, height)
@@ -898,7 +938,7 @@ class ResultOverlay(QtWidgets.QDialog):
         self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        geometry = self._target_geometry(width, height)
+        geometry = self._target_geometry(width, height, region)
         logger.info(
             "Result overlay window: xy=(%s,%s) size=%sx%s lines=%s boxes=%s",
             geometry.x(),
@@ -912,7 +952,7 @@ class ResultOverlay(QtWidgets.QDialog):
 
     @classmethod
     def show_result(cls, lines: list[OcrLine], region: Region) -> None:
-        overlay = cls(lines, region.width, region.height)
+        overlay = cls(lines, region.width, region.height, region=region)
         overlay.show()
         overlay.raise_()
         overlay.activateWindow()
@@ -922,7 +962,7 @@ class ResultOverlay(QtWidgets.QDialog):
 
     @classmethod
     def show_translated(cls, blocks: tuple[TranslatedBlock, ...], region: Region) -> None:
-        overlay = cls(None, region.width, region.height, blocks)
+        overlay = cls(None, region.width, region.height, blocks, region=region)
         overlay.show()
         overlay.raise_()
         overlay.activateWindow()
@@ -963,7 +1003,10 @@ class ResultOverlay(QtWidgets.QDialog):
             font.setPixelSize(box.font_size)
             painter.setFont(font)
             metrics = QtGui.QFontMetricsF(font)
-            line_gap = max(2, round(box.font_size * 0.18))
+            # Match the step used by _translated_text_height so painted lines fit
+            # the box height computed during layout (no descender clipping).
+            line_step = _translated_line_step(box.font_size)
+            line_gap = _translated_line_gap(box.font_size)
             cursor_y = box.y
             for wrapped_line in box.wrapped_lines:
                 line_width = metrics.horizontalAdvance(wrapped_line)
@@ -973,11 +1016,18 @@ class ResultOverlay(QtWidgets.QDialog):
                     x = box.x
                 baseline = cursor_y + metrics.ascent()
                 painter.drawText(QtCore.QPointF(x, baseline), wrapped_line)
-                cursor_y += box.font_size + line_gap
+                cursor_y += line_step + line_gap
 
     @staticmethod
-    def _target_geometry(width: int, height: int) -> QtCore.QRect:
-        screen = QtGui.QGuiApplication.primaryScreen()
+    def _target_geometry(width: int, height: int, region: Region | None = None) -> QtCore.QRect:
+        # Pick the monitor the user actually selected on; fall back to the primary
+        # screen so single-monitor setups behave exactly as before.
+        screen = None
+        if region is not None:
+            center = QtCore.QPoint(region.left + region.width // 2, region.top + region.height // 2)
+            screen = QtGui.QGuiApplication.screenAt(center)
+        if screen is None:
+            screen = QtGui.QGuiApplication.primaryScreen()
         screen_geometry = screen.availableGeometry() if screen else QtCore.QRect(0, 0, width, height)
         x = screen_geometry.x() + (screen_geometry.width() - width) // 2
         y = screen_geometry.y() + int(screen_geometry.height() * 0.75 - height / 2)
