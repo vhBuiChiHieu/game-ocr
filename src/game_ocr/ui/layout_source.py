@@ -8,6 +8,10 @@ from game_ocr.ocr import OcrLine
 
 logger = logging.getLogger(__name__)
 
+# Cheap glyph-width estimate (fraction of font size) for the width-fit shrink loop.
+# Avoids constructing QFontMetrics per candidate font size during layout.
+_AVG_CHAR_WIDTH_RATIO = 0.55
+
 
 @dataclass(frozen=True)
 class DisplayLine:
@@ -333,7 +337,7 @@ def _fit_group_widths(groups: list[_LayoutGroup], overlay_width: int, min_font: 
         while group.font_size > min_font:
             widest = max(
                 (
-                    len(segment.text.strip()) * group.font_size * 0.55
+                    len(segment.text.strip()) * group.font_size * _AVG_CHAR_WIDTH_RATIO
                     for row in group.rows
                     for segment in row.segments
                 ),
@@ -421,6 +425,16 @@ def _fit_groups_to_height(groups: list[_LayoutGroup], overlay_height: int, paddi
             group.font_size = min_font
             group.intra_gap = 0
             group.inter_gap_after = 0
+        # Emergency floor reached: even min font + zero gaps may not fit. Surface it
+        # so an "invisible / clipped overlay" bug report is debuggable from the log.
+        needed = _layout_total_height(groups, padding)
+        if needed > overlay_height:
+            logger.warning(
+                "Source overlay layout hit minimum font %spx but still needs %spx in a %spx overlay; text may clip.",
+                min_font,
+                needed,
+                overlay_height,
+            )
 
     return _LayoutFit(
         total_before=total_before,
@@ -468,13 +482,24 @@ def _total_gap_height(groups: list[_LayoutGroup]) -> int:
 
 def _resync_gaps_to_fonts(groups: list[_LayoutGroup]) -> None:
     # Keep gaps no larger than the original font-relative bound (`font_size * 0.30`,
-    # clamped 2–8 for intra; clamped 6 lower for inter). Only ever shrink — growing
-    # would undo `_reduce_gaps` and reintroduce overflow.
-    for group in groups:
+    # clamped 2–8 for intra). Only ever shrink — growing would undo `_reduce_gaps`
+    # and reintroduce overflow.
+    #
+    # Inter-group bound is role-weighted via `_role_gap_multiplier` (the same source
+    # of truth as `_assign_group_gaps`) instead of a flat 0.80. A flat cap collapses
+    # the hierarchy on the overflow path: a body→button gap (multiplier 1.10) would
+    # otherwise be clamped to the same value as a title→body gap (0.75), so buttons
+    # bunch against body text exactly when space is already tight.
+    for index, group in enumerate(groups):
         if len(group.rows) > 1:
             font_bound = _clamp_int(round(group.font_size * 0.30), 2, 8)
             group.intra_gap = min(group.intra_gap, font_bound)
-        font_bound_inter = _clamp_int(round(group.font_size * 0.80), 6, 12)
+        if index + 1 >= len(groups):
+            continue
+        next_group = groups[index + 1]
+        multiplier = _role_gap_multiplier(group.role, next_group.role)
+        role_bound = max(group.font_size, next_group.font_size) * multiplier
+        font_bound_inter = _clamp_int(round(role_bound), 6, 12)
         group.inter_gap_after = min(group.inter_gap_after, font_bound_inter)
 
 

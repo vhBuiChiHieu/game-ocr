@@ -2,6 +2,7 @@ import unittest
 
 from game_ocr.ocr import OcrLine, _format_ocr_debug_summary, extract_layout_lines, extract_text_lines, join_text_lines
 from game_ocr.translation_blocks import build_translation_blocks, compose_translated_blocks
+from game_ocr.ui.layout_source import _LayoutGroup, _resync_gaps_to_fonts
 from game_ocr.ui.overlay import layout_lines_for_display, layout_translated_blocks_for_display
 
 
@@ -210,6 +211,19 @@ class OcrTests(unittest.TestCase):
 
         self.assertGreater(button_gap, body_gap)
 
+    def test_resync_gaps_preserves_role_hierarchy_on_overflow(self) -> None:
+        # On the overflow path _resync_gaps_to_fonts re-clamps inter-group gaps.
+        # It must stay role-weighted (body->button wider than title->body), not
+        # collapse every gap to a single flat bound. Equal fonts + equal starting
+        # gaps isolate the role multiplier as the only differentiator.
+        title = _LayoutGroup(rows=[None], role="title", font_size=12, intra_gap=0, inter_gap_after=12)
+        body = _LayoutGroup(rows=[None, None], role="body", font_size=12, intra_gap=8, inter_gap_after=12)
+        button = _LayoutGroup(rows=[None], role="button", font_size=12, intra_gap=0, inter_gap_after=0)
+
+        _resync_gaps_to_fonts([title, body, button])
+
+        self.assertGreater(body.inter_gap_after, title.inter_gap_after)
+
     def test_layout_scales_to_fit_without_overlap(self) -> None:
         lines = [
             OcrLine(text=f"Line {index}", left=5, top=10 + index * 20, right=120, bottom=28 + index * 20)
@@ -261,6 +275,22 @@ class OcrTests(unittest.TestCase):
         # than expecting a specific wrap count.
         for body_box in body_boxes:
             self.assertLessEqual(body_box.x + body_box.width, 704)
+
+    def test_wrap_breaks_token_wider_than_box(self) -> None:
+        # A single token wider than the box must hard-break by characters so it
+        # cannot spill past the box at paint. Pieces of one token join with no space.
+        from game_ocr.ui.layout_translated import _translated_text_width, _wrap_translated_text
+
+        word = "A" * 60
+        font_size = 18
+        box_width = 120
+
+        lines = _wrap_translated_text(word, font_size, box_width)
+
+        self.assertGreater(len(lines), 1)
+        self.assertEqual("".join(lines), word)
+        for line in lines:
+            self.assertLessEqual(_translated_text_width(line, font_size), box_width - 8)
 
     def test_translated_layout_handles_tiny_region(self) -> None:
         lines = [OcrLine("Very long translated text", 5, 5, 95, 20)]

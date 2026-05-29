@@ -335,7 +335,7 @@ def _score_edge(
     if current.text[:1].islower() or current.text.startswith((",", ":", ";")):
         score += 1
         reasons.append("continuation_start")
-    if len(current.text) <= 8 and vertical_gap <= median_height:
+    if len(current.text) <= 8 and 0 <= vertical_gap <= median_height:
         score += 2
         reasons.append("short_orphan")
 
@@ -436,7 +436,12 @@ def _classify_role(
         return "menu_item"
     if len(rows) >= 2 and abs(rows[0].center_x - overlay_width / 2) <= overlay_width * 0.2:
         return "notice"
-    if len(text) >= 24:
+    # Prose-length text defaults to dialogue. The 16-char floor (not 24) keeps a
+    # short single-row line — e.g. a 17–23 char block following a long block, which
+    # matches none of the speaker/button/menu_item guards above — out of the
+    # "unknown" bucket, whose generic box size (1.5x source_w) gives short dialogue
+    # the wrong shape. <=16 single-row text was already handled by the guards above.
+    if len(text) >= 16:
         return "dialogue"
     return "unknown"
 

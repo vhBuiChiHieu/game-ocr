@@ -42,6 +42,20 @@ class TranslationBlockTests(unittest.TestCase):
         self.assertEqual([block.text for block in grouping.blocks], ["Alice", "We should leave now."])
         self.assertEqual([block.role for block in grouping.blocks], ["speaker", "dialogue"])
 
+    def test_short_single_row_after_long_block_is_dialogue(self) -> None:
+        # A single-row 17–23 char line following a long block matches none of the
+        # speaker/button/menu_item guards. It must classify as "dialogue" (not the
+        # generic "unknown" bucket, whose box size mis-shapes short dialogue).
+        lines = [
+            OcrLine(text="The hero walks slowly forward.", left=10, top=10, right=320, bottom=34),
+            OcrLine(text="It was getting dark.", left=10, top=80, right=210, bottom=104),
+        ]
+
+        grouping = build_translation_blocks(lines, width=520, height=160)
+
+        self.assertEqual([block.text for block in grouping.blocks], ["The hero walks slowly forward.", "It was getting dark."])
+        self.assertEqual(grouping.blocks[1].role, "dialogue")
+
     def test_bullet_rows_stay_separate(self) -> None:
         lines = [
             OcrLine(text="- Attack", left=10, top=10, right=200, bottom=30),

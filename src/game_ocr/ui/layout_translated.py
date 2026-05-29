@@ -11,6 +11,10 @@ from game_ocr.translation_blocks import TranslatedBlock
 
 logger = logging.getLogger(__name__)
 
+# Fallback glyph-width estimate (fraction of font size) used only when no
+# QApplication exists to provide real QFontMetrics — e.g. in pure unit tests.
+_AVG_CHAR_WIDTH_RATIO = 0.55
+
 
 @dataclass(frozen=True)
 class DisplayTextBox:
@@ -122,15 +126,12 @@ def _actual_translated_width(wrapped: tuple[str, ...], font_size: int, source_w:
 
 def _translated_box_size(role: str, source_w: int, source_h: int, width: int, height: int, padding: int) -> tuple[int, int]:
     available_w = max(1, width - padding * 2)
-    if role == "speaker":
-        # Tight cap anchored to source_w so the speaker box does not balloon on
-        # short labels with long VN translations. Limit to ~1.8x source_w (also
+    if role in {"speaker", "title"}:
+        # Tight cap anchored to source_w so the speaker/title box does not balloon
+        # on short labels with long VN translations. Limit to ~1.8x source_w (also
         # capped at +100px absolute and 55% overlay width). Box height allows up
         # to ~2 wrapped lines so the fit loop can preserve source-matched font
         # by wrapping rather than aggressively shrinking.
-        box_w = min(available_w, round(width * 0.55), max(source_w, min(round(source_w * 1.8), source_w + 100)))
-        box_h = round(source_h * 3.0)
-    elif role == "title":
         box_w = min(available_w, round(width * 0.55), max(source_w, min(round(source_w * 1.8), source_w + 100)))
         box_h = round(source_h * 3.0)
     elif role in {"dialogue", "body", "notice"}:
@@ -199,16 +200,44 @@ def _wrap_translated_text(text: str, font_size: int, width: int) -> tuple[str, .
         if not words:
             lines.append("")
             continue
-        current = words[0]
-        for word in words[1:]:
-            candidate = f"{current} {word}"
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}" if current else word
             if _translated_text_width(candidate, font_size) <= max_width:
                 current = candidate
-            else:
+                continue
+            # `word` does not fit on the current line. Flush the line first, then
+            # place the word — hard-breaking it by characters if the word itself is
+            # wider than the box. Qt drawText does not clip, so an unbroken long
+            # token (proper noun, URL, long number) would otherwise spill past the box.
+            if current:
                 lines.append(current)
+                current = ""
+            if _translated_text_width(word, font_size) <= max_width:
                 current = word
-        lines.append(current)
+            else:
+                chunks = _break_long_token(word, font_size, max_width)
+                lines.extend(chunks[:-1])
+                current = chunks[-1]
+        if current:
+            lines.append(current)
     return tuple(lines or [text])
+
+
+def _break_long_token(token: str, font_size: int, max_width: int) -> list[str]:
+    # Greedily split a single over-wide token into character chunks that each fit
+    # max_width. A char wider than the box still gets its own chunk (unavoidable).
+    chunks: list[str] = []
+    current = ""
+    for char in token:
+        if current and _translated_text_width(current + char, font_size) > max_width:
+            chunks.append(current)
+            current = char
+        else:
+            current += char
+    if current:
+        chunks.append(current)
+    return chunks or [token]
 
 
 def _translated_text_width(text: str, font_size: int) -> float:
@@ -216,7 +245,7 @@ def _translated_text_width(text: str, font_size: int) -> float:
         font = QtGui.QFont(active_family())
         font.setPixelSize(font_size)
         return QtGui.QFontMetricsF(font).horizontalAdvance(text)
-    return len(text) * font_size * 0.55
+    return len(text) * font_size * _AVG_CHAR_WIDTH_RATIO
 
 
 def _translated_line_step(font_size: int) -> int:
@@ -271,6 +300,10 @@ def _resolve_translated_collisions(candidates: list[_TranslatedCandidate], width
             other = pair[0] if target is pair[1] else pair[1]
             other_refit = _fit_translated_block(other.block, width, height, padding, max_font=other.font_size - 1)
             if other_refit.font_size >= other.font_size:
+                # Both candidates already at min readable font — no shrink can free
+                # space. Run a final move pass so any residual overlap is at least
+                # pushed apart vertically before giving up (preserve overlaps=0 intent).
+                _translated_move_until_stable(candidates, height, padding)
                 return
             candidates[candidates.index(other)] = other_refit
             _translated_move_until_stable(candidates, height, padding)
@@ -347,8 +380,19 @@ def _pick_shrink_target(first: _TranslatedCandidate, second: _TranslatedCandidat
     return first if first.height >= second.height else second
 
 
+def _rects_overlap(first, second) -> bool:
+    # Axis-aligned bounding-box intersection. Works on any object exposing
+    # x / y / width / height (both _TranslatedCandidate and DisplayTextBox do).
+    return (
+        first.x < second.x + second.width
+        and first.x + first.width > second.x
+        and first.y < second.y + second.height
+        and first.y + first.height > second.y
+    )
+
+
 def _translated_candidates_overlap(first: _TranslatedCandidate, second: _TranslatedCandidate) -> bool:
-    return first.x < second.x + second.width and first.x + first.width > second.x and first.y < second.y + second.height and first.y + first.height > second.y
+    return _rects_overlap(first, second)
 
 
 def _format_translated_layout_debug_summary(boxes: list[DisplayTextBox], width: int, height: int) -> str:
@@ -377,7 +421,7 @@ def _format_translated_layout_debug_summary(boxes: list[DisplayTextBox], width: 
 
 
 def _boxes_overlap(first: DisplayTextBox, second: DisplayTextBox) -> bool:
-    return first.x < second.x + second.width and first.x + first.width > second.x and first.y < second.y + second.height and first.y + first.height > second.y
+    return _rects_overlap(first, second)
 
 
 def _clamp_int(value: int, lower: int, upper: int) -> int:
