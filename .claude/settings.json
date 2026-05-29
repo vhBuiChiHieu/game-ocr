@@ -7,10 +7,22 @@
           {
             "type": "command",
             "if": "Bash(python *)",
-            "shell": "bash",
-            "command": "jq -c '(.tool_input.command // \"\" | tostring | ltrimstr(\" \")) as $cmd | if (($cmd | test(\"^python([.]exe)?([[:space:]]|$)\")) and (($cmd | test(\"^([.]/)?[.]venv/Scripts/python[.]exe([[:space:]]|$)\")) | not)) then {hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:\"Use .venv/Scripts/python.exe for this project (Python 3.10).\"}} else empty end'",
+            "command": ".venv/Scripts/python.exe .claude/hooks/python_command_guard.py",
             "timeout": 5,
             "statusMessage": "Checking project Python command"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".venv/Scripts/python.exe .claude/hooks/py_compile_check.py",
+            "timeout": 15,
+            "statusMessage": "Syntax-checking edited Python"
           }
         ]
       }

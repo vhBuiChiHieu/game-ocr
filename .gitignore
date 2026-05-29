@@ -1,7 +1,7 @@
-# Local Claude/GitNexus state
-.claude/*
-!.claude/settings.json
+# Claude config: track shared agents/hooks/skills/settings; ignore per-user + generated state
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/skills/gitnexus/
 .gitnexus/
 
 # Python virtual environments
