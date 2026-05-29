@@ -62,6 +62,9 @@ class AppTests(unittest.TestCase):
             mock.patch.object(app, "ensure_translate_backend", return_value=translate_backend),
             mock.patch.object(app, "stop_owned_translate_backend") as stop_translate_backend,
             mock.patch.object(app.QtWidgets.QApplication, "instance", return_value=fake_qt_app),
+            # QApplication.instance is faked, so no real Qt context exists; mock the
+            # native font registration to avoid a QFontDatabase access violation.
+            mock.patch.object(app, "load_application_fonts", return_value={}),
             mock.patch.object(app, "register_capture_hotkey", return_value=registration),
             mock.patch.object(app, "start_tray_icon", return_value=tray_icon) as start_tray_icon,
             mock.patch.object(app.QtCore.QMetaObject, "invokeMethod") as invoke_method,
@@ -90,6 +93,9 @@ class AppTests(unittest.TestCase):
             mock.patch.object(app, "ensure_translate_backend", return_value=translate_backend),
             mock.patch.object(app, "stop_owned_translate_backend") as stop_translate_backend,
             mock.patch.object(app.QtWidgets.QApplication, "instance", return_value=fake_qt_app),
+            # QApplication.instance is faked, so no real Qt context exists; mock the
+            # native font registration to avoid a QFontDatabase access violation.
+            mock.patch.object(app, "load_application_fonts", return_value={}),
             mock.patch.object(app, "register_capture_hotkey", return_value=mock.Mock()),
             mock.patch.object(app, "start_tray_icon", return_value=mock.Mock()),
         ):

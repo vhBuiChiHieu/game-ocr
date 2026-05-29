@@ -1,5 +1,7 @@
 # Game OCR Project Notes
 
+> Before committing, check whether the changes introduce new invariants, commands, env vars, file roles, or test behaviors that this CLAUDE.md should document — sync them in the same commit.
+
 ## Commands
 
 ```bash
@@ -19,7 +21,7 @@ Use targeted tests when touching focused areas:
 | Capture region math | `python -m pytest tests/test_capture.py` |
 | OCR config loading | `python -m pytest tests/test_ocr_config.py` |
 | OCR parsing / overlay layout | `python -m pytest tests/test_ocr.py` |
-| OCR sample screenshots / detail logs | `python -m pytest tests/test_ocr_image_samples.py` |
+| OCR sample screenshots / detail logs | `python -m pytest tests/test_ocr_image_samples.py` (set `GAME_OCR_TEST_IMAGE=img_test_001` to OCR one image instead of all) |
 
 Manual UI check: run `python -m game_ocr`, verify terminal returns, tray icon appears, hotkey OCR works, tray Exit stops process, `logs/YYYY-MM-DD.log` captures output.
 
@@ -101,6 +103,7 @@ Runtime flow:
 - Translated box width shrinks to the wrapped text width: lower bound is source bbox width (preserve spatial mapping), upper bound is the role-derived cap returned by `_translated_box_size`.
 - Dialogue/body/notice roles use `available_w` (full overlay width minus padding) as the cap so the wrap algorithm can fill horizontally before adding lines; tiny regions still respect `available_w` so the box never overflows.
 - `compose_translated_blocks` joins sentence-split units inside a block with a single space (never `\n`); forcing `\n` previously masked the wrap algorithm and produced 2-line layouts even when the box had spare horizontal room.
+- `_wrap_translated_text` normalizes any stray `\n` to a space at entry (defense-in-depth) so an unstripped newline from a translation response cannot force hard breaks and bypass width-based wrapping, even though `compose_translated_blocks` already space-joins upstream.
 - Translated collision resolver runs move-only passes first; if overlap remains, it refits the lower-priority candidate at a smaller `max_font` and re-runs the move pass. Only buttons and titles are protected from shrink — speakers can shrink so dialogue readability wins. If the chosen target is already at min font, the resolver falls back to shrinking the other candidate in the pair before giving up.
 - Speaker/title boxes anchor to source size: `_translated_box_size` caps width at `min(source_w*1.8, source_w+100, width*0.55)` and height at `source_h*3.0` so short labels with long VN translations stay visually mapped to the source region instead of ballooning horizontally.
 - Speaker/title preferred font equals `source_h` (no 1.15x boost) so translated text never starts larger than the source line-height; `_fit_translated_block` additionally pre-shrinks the preferred font by `1/(1+0.3*(ratio-1))` when `len(translated)/len(source) > 1.2`, keeping the final box area close to the source area while still allowing the fit loop to wrap or shrink further.
@@ -120,11 +123,11 @@ Runtime flow:
 ## Test Notes
 
 - `tests/test_main.py` verifies parent/child detached behavior and daily log path format.
-- `tests/test_app.py` verifies CUDA requirement, `gpu:0` selection, hotkey cleanup, tray cleanup, and queued Qt quit.
+- `tests/test_app.py` verifies CUDA requirement, `gpu:0` selection, hotkey cleanup, tray cleanup, and queued Qt quit. Tests that call `app.run()` mock `QApplication.instance` AND `load_application_fonts` — with no real Qt context the native `QFontDatabase.addApplicationFont` call segfaults (Windows access violation), so the font registration must be mocked.
 - `tests/test_capture.py` verifies drag direction normalization and rejects selections smaller than `MIN_REGION_SIZE`.
 - `tests/test_ocr_config.py` verifies missing config defaults to `{"lang": "en"}`, `null` values are ignored, and unsupported keys fail fast.
 - `tests/test_ocr.py` verifies PaddleOCR parsing, bounded logs, row/segment merging, semantic font consistency, compact gaps, and height fitting.
-- `tests/test_ocr_image_samples.py` runs real OCR against `tests/imgs/*` and writes `tests/imgs/ocr_detail_*.log`; use it for visual tuning evidence, not as the fast default unit path. It also renders `tests/imgs/overlay_source_*.png` and `tests/imgs/overlay_translated_*.png` (dark-grey background, white text via Pillow `ImageFont.truetype` using the first font in `fonts/`) so layout regressions can be eyeballed without launching the app. Previews are gitignored and overwrite per run. PIL pixel sizing differs slightly from Qt point sizing — treat the preview as approximate.
+- `tests/test_ocr_image_samples.py` runs real OCR against `tests/imgs/*` and writes `tests/imgs/ocr_detail_*.log`; use it for visual tuning evidence, not as the fast default unit path. It also renders `tests/imgs/overlay_source_*.png` and `tests/imgs/overlay_translated_*.png` (dark-grey background, white text via Pillow `ImageFont.truetype` using the first font in `fonts/`) so layout regressions can be eyeballed without launching the app. Previews are gitignored and overwrite per run. PIL pixel sizing differs slightly from Qt point sizing — treat the preview as approximate. Set env `GAME_OCR_TEST_IMAGE=<stem-or-substring>` (e.g. `img_test_001`) to OCR a single image instead of all; with the selector active only that image's artifacts are cleared. `overlay_source_*`/`overlay_translated_*` PNGs are excluded from the input image set so reruns never feed a prior preview back as an OCR input.
 - Keep sample detail logs capturing `layout_lines_for_display(...)` output so overlay group/role/font summaries appear in `captured_logs`.
 
 Before changing OCR parsing or overlay layout, run:
@@ -170,7 +173,7 @@ Also keep UX minimal:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **game-ocr** (1263 symbols, 2063 relationships, 58 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **game-ocr** (1264 symbols, 2063 relationships, 58 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

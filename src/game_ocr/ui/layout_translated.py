@@ -190,6 +190,10 @@ def _translated_font_range(role: str, source_h: int, height: int) -> tuple[int, 
 def _wrap_translated_text(text: str, font_size: int, width: int) -> tuple[str, ...]:
     max_width = max(1, width - 8)
     lines: list[str] = []
+    # Defense-in-depth: compose_translated_blocks space-joins units (never \n) so
+    # this function controls line breaks by box width. Normalize any stray newline
+    # to a space here so an unstripped \n cannot force hard breaks and bypass wrap.
+    text = text.replace("\n", " ")
     for raw_line in text.splitlines() or [text]:
         words = raw_line.split()
         if not words:

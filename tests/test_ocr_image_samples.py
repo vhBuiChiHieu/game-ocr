@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime
@@ -38,13 +39,35 @@ class OcrImageSampleTests(unittest.TestCase):
             path
             for path in IMAGES_DIR.iterdir()
             if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+            and not path.stem.startswith(("overlay_source_", "overlay_translated_"))
         )
         self.assertGreater(image_paths, [], "tests/imgs has no OCR sample images")
 
+        # Optional single-image selector: set GAME_OCR_TEST_IMAGE to a stem (e.g.
+        # "img_test_001") or substring to OCR just that image instead of all.
+        selector = os.environ.get("GAME_OCR_TEST_IMAGE")
+        if selector:
+            image_paths = [p for p in image_paths if p.stem == selector or selector in p.name]
+            self.assertGreater(
+                image_paths, [], f"no sample image matches GAME_OCR_TEST_IMAGE={selector!r}"
+            )
+
         # Clear stale logs / overlay previews so failed reruns do not leave outdated artifacts behind.
-        for pattern in ("ocr_detail_*.log", "overlay_source_*.png", "overlay_translated_*.png"):
-            for old in IMAGES_DIR.glob(pattern):
-                old.unlink()
+        # When a selector is active, only clear the targeted image's artifacts so other images keep theirs.
+        if selector:
+            for path in image_paths:
+                for name in (
+                    f"ocr_detail_{path.stem}.log",
+                    f"overlay_source_{path.stem}.png",
+                    f"overlay_translated_{path.stem}.png",
+                ):
+                    target = IMAGES_DIR / name
+                    if target.exists():
+                        target.unlink()
+        else:
+            for pattern in ("ocr_detail_*.log", "overlay_source_*.png", "overlay_translated_*.png"):
+                for old in IMAGES_DIR.glob(pattern):
+                    old.unlink()
 
         engine = OcrEngine()
         # Mirror real app startup: spawn the local translate backend (no-op if already up).
