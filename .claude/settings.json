@@ -6,7 +6,6 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(python *)",
             "command": ".venv/Scripts/python.exe .claude/hooks/python_command_guard.py",
             "timeout": 5,
             "statusMessage": "Checking project Python command"
