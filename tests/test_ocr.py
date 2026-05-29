@@ -292,6 +292,34 @@ class OcrTests(unittest.TestCase):
         for line in lines:
             self.assertLessEqual(_translated_text_width(line, font_size), box_width - 8)
 
+    def test_area_match_font_shrinks_as_text_grows(self) -> None:
+        # For a fixed source box, a longer translation must seed a smaller font so the
+        # rendered glyph area stays anchored near the source area (visual-mass parity).
+        from game_ocr.ui.layout_translated import _area_match_font
+
+        self.assertGreater(_area_match_font(200, 30, 8), _area_match_font(200, 30, 40))
+
+    def test_area_match_font_grows_with_source_area(self) -> None:
+        # Same text in a larger source box seeds a larger font.
+        from game_ocr.ui.layout_translated import _area_match_font
+
+        self.assertGreater(_area_match_font(480, 40, 20), _area_match_font(120, 20, 20))
+
+    def test_area_match_font_preserves_source_area(self) -> None:
+        # font^2 * line_ratio * char_ratio * len ~= source_w*source_h (modulo integer
+        # font rounding on the sqrt, which is coarse at small fonts).
+        from game_ocr.ui.layout_translated import (
+            _AVG_CHAR_WIDTH_RATIO,
+            _LINE_HEIGHT_RATIO,
+            _area_match_font,
+        )
+
+        source_w, source_h, text_len = 300, 24, 30
+        font = _area_match_font(source_w, source_h, text_len)
+        modeled_area = _LINE_HEIGHT_RATIO * _AVG_CHAR_WIDTH_RATIO * text_len * font * font
+        source_area = source_w * source_h
+        self.assertLess(abs(modeled_area - source_area) / source_area, 0.25)
+
     def test_translated_layout_handles_tiny_region(self) -> None:
         lines = [OcrLine("Very long translated text", 5, 5, 95, 20)]
         grouping = build_translation_blocks(lines, width=100, height=50)

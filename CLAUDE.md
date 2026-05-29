@@ -109,7 +109,7 @@ Runtime flow:
 - `_wrap_translated_text` hard-breaks (via `_break_long_token`) any single token wider than the box into character chunks; chunks of one token join with no space. Without this, Qt `drawText` (which does not clip) lets a long unbroken token — proper noun, URL, long number — spill past the box width.
 - `_fit_groups_to_height` `logger.warning`s when the emergency min-font + zero-gap floor still cannot fit content in the overlay, so an "invisible / clipped overlay" report is debuggable from the daily log.
 - Speaker/title boxes anchor to source size: `_translated_box_size` caps width at `min(source_w*1.8, source_w+100, width*0.55)` and height at `source_h*3.0` so short labels with long VN translations stay visually mapped to the source region instead of ballooning horizontally.
-- Speaker/title preferred font equals `source_h` (no 1.15x boost) so translated text never starts larger than the source line-height; `_fit_translated_block` additionally pre-shrinks the preferred font by `1/(1+0.3*(ratio-1))` when `len(translated)/len(source) > 1.2`, keeping the final box area close to the source area while still allowing the fit loop to wrap or shrink further.
+- `_fit_translated_block` seeds the preferred font via `_area_match_font(source_w, source_h, len(translated))` = `sqrt(source_w*source_h / (_LINE_HEIGHT_RATIO * _AVG_CHAR_WIDTH_RATIO * len))`, so the translated glyph area starts ≈ the source bbox area (visual-mass parity) regardless of role. The seed is clamped into the role's `[min_font, role_cap]` band returned by `_translated_font_range` (never exceeds the role's max readable size nor drops below the floor), then the fit loop refines downward to honour `box_h`/`cap_w`. This replaced the old role-based `0.9x` seed AND the speaker/title `1/(1+0.3*(ratio-1))` length-ratio pre-shrink — two hand-tuned coefficients approximating the same area-parity goal less directly. `_area_match_font` uses the `_AVG_CHAR_WIDTH_RATIO` fallback constant even when Qt is present because it only sets the starting point; the loop still measures real `QFontMetrics` widths for wrapping. `_LINE_HEIGHT_RATIO = 1.2` is the single source of truth shared by `_translated_line_step` and the seed.
 - Translated box height and `_paint_boxes` step use `_translated_line_step ≈ font_size * 1.2` to cover ascent + descent; using bare `font_size` clips descenders below the computed box.
 - Translated layout tests run without QApplication; guard Qt font metrics or use deterministic width estimates in pure tests.
 - Translated overlay logs should include backend/model, block/unit counts, fallback reason, per-block bbox, completion, target box, font, align, wrap count, overflow/overlap.
@@ -176,7 +176,7 @@ Also keep UX minimal:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **game-ocr** (1264 symbols, 2063 relationships, 58 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **game-ocr** (1282 symbols, 2081 relationships, 54 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

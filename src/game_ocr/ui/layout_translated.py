@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 # QApplication exists to provide real QFontMetrics — e.g. in pure unit tests.
 _AVG_CHAR_WIDTH_RATIO = 0.55
 
+# Rendered line height as a fraction of font size (ascent + descent). Physical
+# typography constant — single source of truth for line stepping and the
+# area-match font seed below.
+_LINE_HEIGHT_RATIO = 1.2
+
 
 @dataclass(frozen=True)
 class DisplayTextBox:
@@ -83,18 +88,18 @@ def _fit_translated_block(
     # Role-based box size acts as the upper cap; actual box_w shrinks to fit text.
     cap_w, box_h = _translated_box_size(block.role, source_w, source_h, width, height, padding)
     align = _translated_align(block, width)
-    preferred_font, min_font = _translated_font_range(block.role, source_h, height)
-    # Length-aware pre-shrink for speaker/title: when the translated text is meaningfully
-    # longer than the source label (typical for EN→VN), starting at source_h leaves the
-    # box visually ballooned. Scale preferred font down by 1/(1+0.3*(ratio-1)) so the
-    # final box width stays anchored near the source area while keeping the title readable.
-    if block.role in {"speaker", "title"}:
-        source_len = max(1, len(block.source_text))
-        translated_len = max(1, len(block.translated_text))
-        ratio = translated_len / source_len
-        if ratio > 1.2:
-            scale = 1.0 / (1.0 + 0.3 * (ratio - 1.0))
-            preferred_font = max(min_font, round(preferred_font * scale))
+    role_cap, min_font = _translated_font_range(block.role, source_h, height)
+    # Area-match seed: pick the starting font so the translated text's total glyph
+    # area roughly equals the source bbox area, giving visual-mass parity with the
+    # original line regardless of how it wraps. Clamp into the role's [min, cap] band
+    # so it never exceeds the role's max readable size nor drops below the floor.
+    # This replaces both the old role-based 0.9x seed and the speaker/title length-
+    # ratio pre-shrink — two hand-tuned coefficients doing this same job less directly.
+    preferred_font = _clamp_int(
+        _area_match_font(source_w, source_h, len(block.translated_text)),
+        min_font,
+        role_cap,
+    )
     if max_font is not None:
         preferred_font = max(min_font, min(preferred_font, max_font))
     for font_size in range(preferred_font, min_font - 1, -1):
@@ -188,6 +193,19 @@ def _translated_font_range(role: str, source_h: int, height: int) -> tuple[int, 
     return _clamp_int(round(source_h * 0.90), 11, 18), tiny_min
 
 
+def _area_match_font(source_w: int, source_h: int, text_len: int) -> int:
+    # Seed the preferred font so the translated text's total glyph area ~ the source
+    # bbox area. Glyph cells sum to ~ L * (char_ratio*f) * (line_ratio*f) independent
+    # of wrapping, so source_w*source_h = line_ratio*char_ratio*L*f^2 solves for f.
+    # The fit loop still refines downward to honour box_h / cap_w; this only sets the
+    # starting point, so an approximate char-width constant is acceptable here.
+    text_len = max(1, text_len)
+    denom = _LINE_HEIGHT_RATIO * _AVG_CHAR_WIDTH_RATIO * text_len
+    if denom <= 0:
+        return max(1, source_h)
+    return max(1, round((source_w * source_h / denom) ** 0.5))
+
+
 def _wrap_translated_text(text: str, font_size: int, width: int) -> tuple[str, ...]:
     max_width = max(1, width - 8)
     lines: list[str] = []
@@ -249,10 +267,10 @@ def _translated_text_width(text: str, font_size: int) -> float:
 
 
 def _translated_line_step(font_size: int) -> int:
-    # Real rendered line height ≈ ascent + descent ≈ font_size * 1.2.
+    # Real rendered line height ≈ ascent + descent ≈ font_size * _LINE_HEIGHT_RATIO.
     # Using bare font_size leaves descenders of the last line below the computed box,
     # which causes box-fitting to under-reserve space and translated text to clip.
-    return max(font_size, round(font_size * 1.2))
+    return max(font_size, round(font_size * _LINE_HEIGHT_RATIO))
 
 
 def _translated_line_gap(font_size: int) -> int:
